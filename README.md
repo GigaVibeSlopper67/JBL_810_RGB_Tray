@@ -199,19 +199,24 @@ python3 tools/jbl_rgb.py --status                  # read-only probe
 python3 tools/jbl_rgb.py --solid ff0000 --lights on          # red, breathing effect
 python3 tools/jbl_rgb.py --solid 00ffcc --element logo       # only the logo
 python3 tools/jbl_rgb.py --solid ff8800 --speed 0x32 --mode 0x05  # tempo/M-byte experiments
+python3 tools/jbl_rgb.py --logo ff0000 --ring 0000ff         # different color per element
+python3 tools/jbl_rgb.py --segments-colors ff0000,00ff00,0000ff,ffffff,000000  # per segment
+python3 tools/jbl_rgb.py --segments-colors ff0000,00ff00 --element ring  # ring only, 2 segments
 python3 tools/jbl_rgb.py --default --lights off    # factory teal + lights off
 python3 tools/jbl_rgb.py --raw "4c 00 64 05;4d 00 00 ff 00 00 02 00"  # raw feature reports
 ```
 
 Options: `--element logo|ring|both` (verified: element 0 = logo, 1 = ring),
-`--reset-segments N` (clearing pass before the final table, default 5;
-0 disables - wipes stale colors of earlier writes), `--segments N` (final
-table segments per element, default 5 = QuantumENGINE-exact), `--speed`
-(0x4c tempo byte, default `0x64`), `--mode` (0x4d interval marker, default
-`0x02` logo / `0x05` ring), `--delay SEC` (pause between SETs, default
-0.02 s - dropped-write guard), `--lights on|off|keep` (state after the
-write, default `keep`) and `--listen SEC` (seconds to listen for `0x07` ACK
-events after a write).
+`--logo RRGGBB` / `--ring RRGGBB` (solid color for one element; combine both
+for different colors), `--segments-colors C1,C2,...` (per-segment colors,
+1–5 entries, applied to `--element`), `--reset-segments N` (clearing pass
+before the final table, default 5; 0 disables - wipes stale colors of earlier
+writes), `--segments N` (final table segments per element, default 5 =
+QuantumENGINE-exact), `--speed` (0x4c tempo byte, default `0x64`), `--mode`
+(0x4d interval marker, default `0x02` logo / `0x05` ring), `--delay SEC`
+(pause between SETs, default 0.02 s - dropped-write guard), `--lights
+on|off|keep` (state after the write, default `keep`) and `--listen SEC`
+(seconds to listen for `0x07` ACK events after a write).
 
 > ### ⚠️ RGB value ranges - do NOT exceed these (can brick the lighting)
 >
@@ -238,7 +243,7 @@ events after a write).
 The scripts below live in `tools/` and are useful for analysis/debugging:
 
 - `tools/jbl_status.py`: **full status reader** (battery, ANC, mic, game/chat mix, serial) with `--json`, `--watch` and control flags (`--set-anc`, `--set-lights`, `--set-sidetone`)
-- `tools/jbl_rgb.py`: **RGB lighting CLI** - `--status` (read-only probe), `--solid RRGGBB [--element logo|ring|both]`, `--default` (factory teal table), `--raw` hex sequences, `--reset-segments N` + `--segments N` (two-pass write: clear table, then QuantumENGINE-exact 5-segment table), `--speed`/`--mode` (0x4c tempo / 0x4d M-byte overrides), `--delay SEC` (dropped-write guard), `--lights on|off|keep`, `--listen SEC`; performs the arming GET round automatically
+- `tools/jbl_rgb.py`: **RGB lighting CLI** - `--status` (read-only probe), `--solid RRGGBB [--element logo|ring|both]`, `--logo RRGGBB` / `--ring RRGGBB` (per-element solid, combinable), `--segments-colors C1,C2,...` (per-segment colors), `--default` (factory teal table), `--raw` hex sequences, `--reset-segments N` + `--segments N` (two-pass write: clear table, then QuantumENGINE-exact 5-segment table), `--speed`/`--mode` (0x4c tempo / 0x4d M-byte overrides), `--delay SEC` (dropped-write guard), `--lights on|off|keep`, `--listen SEC`; performs the arming GET round automatically
 - `tools/jbl_status_probe.py`: **live protocol probe** (`--monitor` decodes event packets, `--features` watches feature reports, `--scan` sweeps all report IDs, `--correlate` guides you through verifying each action)
 - `tools/jbl_battery_auto.py`: auto-detects the dongle (910/810) and monitors the battery
 - `tools/jbl_battery_hidraw.py`: full dump/analysis (has `--log`)

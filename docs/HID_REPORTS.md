@@ -265,7 +265,8 @@ mute actually gates the capture path.
 - `tools/jbl_status.py` - status reader + controls CLI (`--json`, `--watch`,
   `--set-anc`, `--set-lights`, `--set-sidetone`)
 - `tools/jbl_rgb.py` - RGB lighting CLI (`--status` read-only probe,
-  `--solid RRGGBB [--element logo|ring|both]`, `--default` factory table,
+  `--solid RRGGBB [--element logo|ring|both]`, `--logo RRGGBB` / `--ring RRGGBB`,
+  `--segments-colors C1,C2,...`, `--default` factory table,
   `--raw` hex sequences, `--speed`/`--mode` tuning overrides,
   `--lights on|off|keep`, `--listen SEC`; arms automatically before writes)
 - `tools/jbl_status_probe.py` - live protocol probe (`--monitor`, `--features`,

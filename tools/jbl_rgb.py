@@ -43,6 +43,9 @@ Examples:
     python3 tools/jbl_rgb.py --solid ff0000 --lights on
     python3 tools/jbl_rgb.py --solid ff0000 --reset-segments 5    # full-table clear (max safe)
     python3 tools/jbl_rgb.py --solid 00ffcc --element logo --lights keep
+    python3 tools/jbl_rgb.py --logo ff0000 --ring 0000ff     # different per element
+    python3 tools/jbl_rgb.py --segments-colors ff0000,00ff00,0000ff,ffffff,000000
+    python3 tools/jbl_rgb.py --segments-colors ff0000,00ff00 --element ring
     python3 tools/jbl_rgb.py --default --lights off   # factory teal + lights off
     python3 tools/jbl_rgb.py --raw "4c 00 64 05;4d 00 00 ff 00 00 02 00"
 """
@@ -198,6 +201,31 @@ def send_table(reader: JblStatusReader, frames: dict, speed: int = FACTORY_SPEED
     return True
 
 
+def write_color_table(reader: JblStatusReader, frames: dict, segments: int,
+                      speed: int = FACTORY_SPEED, modes: dict | None = None,
+                      lights: str = "keep", reset_segments: int = RESET_SEGMENTS,
+                      delay: float = WRITE_DELAY, what: str = "") -> bool:
+    """Two-pass color write: a clearing pass then the final per-element table.
+
+    `frames` maps zone -> list of colors; `segments` is the final table segment
+    count (the per-zone color list is cycled when shorter). The clearing pass
+    overwrites `reset_segments` slots per element with that element's first
+    color to wipe stale residue, then the final table is written and `lights`
+    applied (the table takes effect on the lights off->on transition).
+    """
+    ok = True
+    if reset_segments:
+        clear = {zone: [frames[zone][0]] * reset_segments for zone in frames}
+        print(f"reset pass{(' ' + what) if what else ''}: "
+              f"{reset_segments} segments per element:")
+        ok = send_table(reader, clear, speed=speed, modes=modes, lights="keep",
+                        segments=reset_segments, delay=delay)
+    if ok:
+        ok = send_table(reader, frames, speed=speed, modes=modes, lights=lights,
+                        segments=segments, delay=delay)
+    return ok
+
+
 def listen_events(reader: JblStatusReader, seconds: float) -> None:
     """Print interrupt-IN events for a while (ACKs like the 0x07 lights event)."""
     print(f"listening for dongle events for {seconds:.0f}s...")
@@ -256,6 +284,22 @@ def parse_hex_sequence(text: str) -> list:
     return reports
 
 
+def parse_rgb(text: str) -> tuple:
+    """'ff0000' -> (255, 0, 0); errors out on malformed input."""
+    rgb = bytes.fromhex(text)
+    if len(rgb) != 3:
+        raise SystemExit(f"{text!r} must be RRGGBB, e.g. ff0000")
+    return (rgb[0], rgb[1], rgb[2])
+
+
+def parse_color_list(text: str) -> list:
+    """'ff0000,00ff00,0000ff' -> [(255,0,0), (0,255,0), (0,0,255)]."""
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    if not parts:
+        raise SystemExit("--segments-colors expects RRGGBB,RRGGBB,...")
+    return [parse_rgb(p) for p in parts]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="JBL Quantum 810 RGB lighting CLI "
                                              "(feature reports 0x4c/0x4d/0x4b)")
@@ -265,8 +309,17 @@ def main() -> int:
                     help="single color (breathing effect) written as --segments "
                          "identical segments - CHANGES DEVICE STATE")
     ap.add_argument("--element", choices=["logo", "ring", "both"], default="both",
-                    help="lighting element for --solid (default both; verified: "
-                         "element 0 = logo, 1 = ring)")
+                    help="lighting element for --solid / --segments-colors "
+                         "(default both; verified: element 0 = logo, 1 = ring)")
+    ap.add_argument("--logo", metavar="RRGGBB",
+                    help="solid color for the logo element only (element 0) - "
+                         "CHANGES DEVICE STATE; can combine with --ring")
+    ap.add_argument("--ring", metavar="RRGGBB",
+                    help="solid color for the ring element only (element 1) - "
+                         "CHANGES DEVICE STATE; can combine with --logo")
+    ap.add_argument("--segments-colors", metavar="C1,C2,...",
+                    help="per-segment colors (1..5 comma-separated RRGGBB) for "
+                         "--element (default both) - CHANGES DEVICE STATE")
     ap.add_argument("--default", action="store_true",
                     help="replay the factory teal table - CHANGES DEVICE STATE")
     ap.add_argument("--raw", metavar="SEQ",
@@ -308,7 +361,8 @@ def main() -> int:
         return 1
 
     try:
-        if args.status or not (args.solid or args.default or args.raw):
+        if args.status or not (args.solid or args.logo or args.ring
+                               or args.segments_colors or args.default or args.raw):
             probe(reader)
             return 0
 
@@ -325,33 +379,47 @@ def main() -> int:
                   file=sys.stderr)
         print()
 
+        # Color-table modes: --solid, --logo, --ring and --segments-colors are
+        # merged into one per-element table and written once (clear pass +
+        # final table). Per-element flags override the broader modes for the
+        # element they name.
+        modes = ({0: args.mode, 1: args.mode} if args.mode is not None else FACTORY_MODES)
+        speed = (args.speed if args.speed is not None else FACTORY_SPEED)
+        frames: dict = {}
+        final_segments = args.segments
+        what = ""
+
         if args.solid:
-            rgb = bytes.fromhex(args.solid)
-            if len(rgb) != 3:
-                raise SystemExit("--solid expects RRGGBB, e.g. ff0000")
-            r, g, b = rgb[0], rgb[1], rgb[2]
+            color = parse_rgb(args.solid)
             wanted = {"logo": (0,), "ring": (1,), "both": ZONES}[args.element]
-            modes = ({0: args.mode, 1: args.mode} if args.mode is not None else FACTORY_MODES)
-            speed = (args.speed if args.speed is not None else FACTORY_SPEED)
-            ok = True
-            if args.reset_segments:
-                # Clearing pass: overwrite every slot with the new color
-                # (stale colors from earlier writes otherwise keep cycling),
-                # then the final table restores the QuantumENGINE shape.
-                clear = {element: [(r, g, b)] * args.reset_segments
-                         for element in wanted}
-                print(f"reset pass: {args.reset_segments} segments per element:")
-                ok = send_table(reader, clear, speed=speed, modes=modes,
-                                lights="keep", segments=args.reset_segments,
-                                delay=args.delay)
-            if ok:
-                frames = {element: [(r, g, b)] * args.segments
-                          for element in wanted}
-                print(f"writing color #{args.solid.upper()} (R={r} G={g} B={b}) "
-                      f"to element(s): {args.element} ({args.segments} segments):")
-                ok = send_table(reader, frames, speed=speed,
-                                modes=modes, lights=args.lights,
-                                segments=args.segments, delay=args.delay)
+            for element in wanted:
+                frames[element] = [color] * args.segments
+            what = f"solid #{args.solid.upper()}"
+
+        if args.segments_colors:
+            colors = parse_color_list(args.segments_colors)
+            final_segments = max(1, min(len(colors), MAX_SEGMENTS))
+            wanted = {"logo": (0,), "ring": (1,), "both": ZONES}[args.element]
+            for element in wanted:
+                frames[element] = list(colors)
+            what = f"segments {args.segments_colors.lower()}"
+
+        if args.logo:
+            color = parse_rgb(args.logo)
+            frames[0] = [color] * args.segments
+            what = f"logo #{args.logo.upper()}" if not what else what + " + logo"
+
+        if args.ring:
+            color = parse_rgb(args.ring)
+            frames[1] = [color] * args.segments
+            what = f"ring #{args.ring.upper()}" if not what else what + " + ring"
+
+        if frames:
+            print(f"writing {what} ({final_segments} segments):")
+            ok = write_color_table(reader, frames, final_segments,
+                                   speed=speed, modes=modes, lights=args.lights,
+                                   reset_segments=args.reset_segments,
+                                   delay=args.delay, what=what)
             print(f"table write: {'OK' if ok else 'FAILED'}")
 
         if args.default:

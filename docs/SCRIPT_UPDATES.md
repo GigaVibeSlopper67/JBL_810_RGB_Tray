@@ -17,6 +17,11 @@ full per-element / per-segment model the protocol supports:
   per-segment color list in addition to a single color. All safety invariants
   are unchanged (1–5 segment clamp, safe tempo/M sets, pacing, arming, the
   lights off->on commit, and the lights-toggle abort).
+- CLI parity (`tools/jbl_rgb.py`): added `--logo RRGGBB` / `--ring RRGGBB`
+  (per-element solid, combinable) and `--segments-colors C1,C2,...`
+  (per-segment colors, applied to `--element`). These merge into one
+  per-element table and go through a new `write_color_table` two-pass helper
+  (clear + final), keeping the same clamps and pacing as `--solid`.
 
 ### RGB color mixups fixed (tray + `tools/jbl_rgb.py`)
 Diagnosed from the `ToDo.md` observations and fixed in both write paths:
