@@ -24,7 +24,7 @@ First byte of the packet is the report ID.
 | `0x08` | Battery | byte1: percent 0..100 |
 | `0x09` | Power-on marker | `09 01` (headset powered on) |
 | `0x10` | Game/Chat mix | byte1: `00`=full chat ... `0x10`=full game (16 steps) |
-| `0x2f` | Mute (910 only) | `02`=toggle mute, `00`=unmuted |
+| `0x2f` | Mute toggle (810 + 910) | `02`=toggle, `00`=release; the actual mic state is carried by `0x06` |
 
 When the headset powers on, the dongle emits a full state burst:
 `02, 03, 06, 07, 08 (x4), 09, 10` - this is the best way to (re)sync all
@@ -38,6 +38,11 @@ is in use).
 > event is emitted. This is intended headset behavior, not a monitoring
 > gap. Both mute sources (mic arm and mute button) feed the same
 > `0x06`/`0x67` state.
+>
+> Every mute-state change (arm or button) is bracketed by a `0x2f` toggle
+> marker: `2f 02` (toggle) ... `06 XX` (authoritative state) ... `2f 00`
+> (release). The trailing `2f 00` is **not** an "unmuted" state - it fires
+> after both mute and unmute, so treat `0x06`/`0x67` as the authority.
 
 ## Feature reports (GET_REPORT - read-only)
 
@@ -229,6 +234,20 @@ thread so the UI never blocks; it skips re-arming while fresh
   - `--raw "4c 00 64 05;4d 00 00 ff 00 00 02 00"` - send raw feature reports
     (**NOT clamped** - bypasses every safety guard and can wedge the lighting
     MCU; use only with values from the safe-ranges table above)
+
+## Mic mute also drives the USB Audio Class mute
+
+Besides the HID `0x06`/`0x2f` events, the host (QuantumENGINE / the OS audio
+stack) issues the standard **USB Audio Class** `SET_CUR` MUTE control on the
+audio interface in sync with the arm (confirmed in `pcaps/05 ... muting.pcapng`):
+
+- `bm=0x21 bReq=0x01` = `SET_CUR` (UAC), `wValue=0x0100` = MUTE selector,
+  `wIndex=0x0602` = Feature Unit `0x06` / interface `0x02`.
+- payload `00` = unmute (arm down), `01` = mute (arm up).
+
+This is a separate mechanism from the HID reports: `0x06`/`0x67` is the
+headset mic state, `0x2f` is the toggle/release marker, and the UAC `SET_CUR`
+mute actually gates the capture path.
 
 ## What is NOT (yet) monitorable
 

@@ -216,21 +216,24 @@ def parse_battery_from_packet(packet: bytes) -> Optional[int]:
 def parse_mute_from_packet(packet: bytes) -> Optional[tuple[bool, bool]]:
     """
     Parse mute status from a packet.
-    - 0x2f 0x02 = toggle mute (button pressed, Quantum 910) -> returns (True, True) = toggle
-    - 0x2f 0x00 = unmuted state -> returns (False, False) = unmuted
     - 0x06 0x00/0x01 = mic off/on events (Quantum 810; confirmed in the
-      HeadsetControl #357 USB captures) -> state, not a toggle.
+      HeadsetControl #357 USB captures) -> authoritative state.
+    - 0x2f 0x02 = mute toggle (button/arm, 810 + 910) -> toggle marker.
+    - 0x2f 0x00 = toggle release (810 + 910) -> NOT a state; the actual mic
+      state follows via 0x06 (arm) / 0x67 (read-back). Ignore it so the
+      trailing release of a mute/unmute does not flip the state back.
     Returns (is_toggle, is_muted) or None if not a mute packet.
     """
-    if len(packet) >= 2 and packet[0] == 0x2f:
-        if packet[1] == 0x02:
-            return (True, True)  # Toggle - need to flip the state
-        elif packet[1] == 0x00:
-            return (False, False)  # Unmuted state
     if len(packet) >= 2 and packet[0] == 0x06:
         # Quantum 810 mic events: 0 = mic off (muted), 1 = mic on.
+        # Authoritative; 0x2f is only a toggle/release marker.
         if packet[1] in (0x00, 0x01):
             return (False, packet[1] == 0x00)
+    if len(packet) >= 2 and packet[0] == 0x2f:
+        if packet[1] == 0x02:
+            return (True, True)  # Toggle - flip the state (button/arm)
+        elif packet[1] == 0x00:
+            return None  # Release marker - not a state; ignore.
     return None
 
 
@@ -1492,6 +1495,7 @@ class BatteryTrayApp:
                 self._sidetone_radio_items[value] = sub
             sidetone_item = self.Gtk.MenuItem(label="Sidetone")
             sidetone_item.set_submenu(sidetone_menu)
+            self._sidetone_menu_item = sidetone_item
             menu.append(sidetone_item)
 
             # RGB lighting (logo + ring elements, Quantum 810): pick a color
@@ -1554,6 +1558,14 @@ class BatteryTrayApp:
 
     def _set_sidetone(self, value: int) -> None:
         if self.hidraw_reader is None:
+            return
+        if self._is_muted and value != 0:
+            # Mirror QuantumENGINE: sidetone is greyed out while the mic is
+            # muted. Turning it on then can wedge/restart the dongle, so
+            # refuse to send a non-off level until the mic is unmuted.
+            name = StatusSample.SIDETONE_NAMES.get(value, str(value))
+            _log(f"Sidetone: skipped {name} while microphone is muted "
+                 f"(mirrors QuantumENGINE grey-out)")
             return
         if self.hidraw_reader.send_feature(0x5D, value):
             name = StatusSample.SIDETONE_NAMES.get(value, str(value))
@@ -2100,6 +2112,10 @@ class BatteryTrayApp:
             if getattr(self, "_menu_sidetone_item", None) is not None:
                 side_txt = StatusSample.SIDETONE_NAMES.get(self._sidetone) if self._sidetone is not None else None
                 self._menu_sidetone_item.set_label(f"Sidetone: {side_txt or '--'}")
+            if getattr(self, "_sidetone_menu_item", None) is not None:
+                # Grey out the sidetone control while muted (mirrors the
+                # QuantumENGINE behaviour of disabling sidetone on mute).
+                self._sidetone_menu_item.set_sensitive(not self._is_muted)
             if getattr(self, "_menu_lights_toggle_item", None) is not None and self._lights_on is not None:
                 self._menu_lights_toggle_item.set_label("Lights: turn off" if self._lights_on else "Lights: turn on")
             self._update_sidetone_radios()

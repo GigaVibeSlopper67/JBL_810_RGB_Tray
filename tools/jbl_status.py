@@ -396,6 +396,10 @@ class JblStatusReader:
         value = {"off": 0, "low": 1, "mid": 2, "high": 3}.get(level)
         if value is None:
             raise ValueError(f"invalid sidetone level: {level!r}")
+        if value != 0 and self.status.mic_muted:
+            # Mirror QuantumENGINE: sidetone is disabled while muted; turning
+            # it on then can wedge/restart the dongle. Refuse non-off levels.
+            return False
         return self._set_feature(FEAT_SET_SIDETONE, value)
 
     # -- extras -------------------------------------------------------------------
