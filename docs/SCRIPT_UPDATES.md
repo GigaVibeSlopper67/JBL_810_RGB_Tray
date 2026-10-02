@@ -99,7 +99,7 @@ Diagnosed from the `ToDo.md` observations and fixed in both write paths:
   the `0x4a` read-back. Device state cleaned live: the stock 5-segment
   factory table is re-written and cached, lights left off.
 
-### Tray (`jbl_quantum910_tray.py`)
+### Tray (`jbl_quantum_810_910_tray.py`)
 - **Notifications** (`Notifier` class): desktop alerts on **low battery**
   (20/10/5 %, re-armed once the level climbs back above a threshold) and on
   **dongle connect/disconnect**. Uses libnotify (GObject) with a

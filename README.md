@@ -29,7 +29,7 @@ The confirmed battery pattern for this headset is:
 - **Tray/AppIndicator**: shows the battery % in the tray and updates automatically.
 - **Reading**: hidraw first (works for both models), pyusb as fallback. On the Quantum 810 the battery is actively polled via HID feature report `0x49`, so it stays fresh even when the headset is quiet.
 - **Extra headset status (810)**: the tray and CLI also show **ANC state**, **mic mute**, the **game/chat dial position** and the device **part/serial number** - see `docs/HID_REPORTS.md`.
-- **Controls (opt-in)**: with `jbl_quantum910_tray.py --enable-controls` the tray menu can **cycle ANC**, **toggle the lights**, **set the sidetone** (radio items marking the level read back via `0x5c`), **set the auto power off** (radio items marking the timeout read back via `0x75`) and **set the lighting color** (logo + ring elements, breathing effect; "Lighting" submenu with a GTK color picker + presets) via HID feature reports (`0x46`/`0x4b`/`0x5d`/`0x75`/`0x4c`+`0x4d`) - see `docs/HID_REPORTS.md`.
+- **Controls (opt-in)**: with `jbl_quantum_810_910_tray.py --enable-controls` the tray menu can **cycle ANC**, **toggle the lights**, **set the sidetone** (radio items marking the level read back via `0x5c`), **set the auto power off** (radio items marking the timeout read back via `0x75`) and **set the lighting color** (logo + ring elements, breathing effect; "Lighting" submenu with a GTK color picker + presets) via HID feature reports (`0x46`/`0x4b`/`0x5d`/`0x75`/`0x4c`+`0x4d`) - see `docs/HID_REPORTS.md`.
 - **Lights/sidetone/auto-power-off state**: the tray reads back and shows the current **lights state** (`0x4a`), **sidetone level** (`0x5c`) and **auto power off timeout** (`0x75`) in the menu/tooltip; the sidetone and auto-power-off submenus mark the active value.
 - **Notifications**: desktop notifications on **low battery** (20/10/5%) and **dongle connect/disconnect**; mute notifications opt-in via `--notify-mute`; everything off with `--no-notifications`.
 - **Battery history & estimate**: every percentage change is appended to `~/.local/share/jbl-quantum-tray/history.csv`; the tray computes the drain rate and shows an **estimated runtime left** in the menu/tooltip (needs ~5 minutes of data).
@@ -39,7 +39,7 @@ The confirmed battery pattern for this headset is:
 
 ## Project structure
 
-- **`jbl_quantum910_tray.py`**: tray app (main; supports the 910 and 810)
+- **`jbl_quantum_810_910_tray.py`**: tray app (main; supports the 910 and 810)
 - **`jbl_battery_simple.py`**: CLI battery monitor (pyusb)
 - **`check_permissions.sh`**: verifies device access, udev rules and Python libraries
 - **`setup_udev_rules.sh`**: installs the udev rules (no plugdev group needed)
@@ -78,7 +78,7 @@ sudo ./setup_udev_rules.sh
 ### 3) Run the tray
 
 ```bash
-python3 ./jbl_quantum910_tray.py
+python3 ./jbl_quantum_810_910_tray.py
 ```
 
 If you just want to test the reading (CLI), use:
@@ -132,20 +132,20 @@ instead). The tray menu also shows `Battery: 45%`. On KDE Plasma, hovering the
 icon shows the full status in the tooltip:
 
 ```bash
-python3 ./jbl_quantum910_tray.py
+python3 ./jbl_quantum_810_910_tray.py
 # Default: a custom badge with the percentage + a "JBL" tag. To use the
 # desktop's native themed battery icons instead (no percentage/tag drawn in):
-python3 ./jbl_quantum910_tray.py --no-numeric-icon
+python3 ./jbl_quantum_810_910_tray.py --no-numeric-icon
 ```
 
 Useful options:
 
 ```bash
-python3 ./jbl_quantum910_tray.py --refresh 1.0
-python3 ./jbl_quantum910_tray.py --prefer-hidraw  # recommended for the Quantum 810
-python3 ./jbl_quantum910_tray.py --no-notifications  # disable desktop notifications
-python3 ./jbl_quantum910_tray.py --notify-mute      # also notify on mute changes
-python3 ./jbl_quantum910_tray.py --enable-controls  # menu controls: ANC/lights/sidetone/RGB
+python3 ./jbl_quantum_810_910_tray.py --refresh 1.0
+python3 ./jbl_quantum_810_910_tray.py --prefer-hidraw  # recommended for the Quantum 810
+python3 ./jbl_quantum_810_910_tray.py --no-notifications  # disable desktop notifications
+python3 ./jbl_quantum_810_910_tray.py --notify-mute      # also notify on mute changes
+python3 ./jbl_quantum_810_910_tray.py --enable-controls  # menu controls: ANC/lights/sidetone/RGB
 ```
 
 ## Installation (recommended) — starts with the system (login)

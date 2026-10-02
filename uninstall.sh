@@ -34,7 +34,7 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
 fi
 
 # On XDG-autostart systems there is no service to stop the running tray.
-pkill -f jbl_quantum910_tray.py 2>/dev/null || true
+pkill -f jbl_quantum_810_910_tray.py 2>/dev/null || true
 
 echo "OK. Removed."
 

@@ -164,7 +164,7 @@ def _import_appindicator():
         print("  RHEL/Rocky/Alma (EPEL): sudo dnf install -y epel-release && sudo dnf install -y python3-gobject gtk3 libayatana-appindicator-gtk3", file=sys.stderr)
         print("\nTip:", file=sys.stderr)
         print("  If you use pyenv/conda/venv, run with the system Python:", file=sys.stderr)
-        print("    /usr/bin/python3 ./jbl_quantum910_tray.py", file=sys.stderr)
+        print("    /usr/bin/python3 ./jbl_quantum_810_910_tray.py", file=sys.stderr)
         sys.exit(1)
 
 

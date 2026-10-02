@@ -281,7 +281,7 @@ mute actually gates the capture path.
   `--lights on|off|keep`, `--listen SEC`; arms automatically before writes)
 - `tools/jbl_status_probe.py` - live protocol probe (`--monitor`, `--features`,
   `--scan`, `--correlate`)
-- `jbl_quantum910_tray.py` - tray shows ANC/mic/mix/lights/sidetone/serial
+- `jbl_quantum_810_910_tray.py` - tray shows ANC/mic/mix/lights/sidetone/serial
   plus a battery drain estimate; menu controls behind `--enable-controls`
   (ANC cycle, lights toggle, sidetone radio group) including a **Lighting**
   submenu with a color picker and presets (breathing effect)

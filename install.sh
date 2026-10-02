@@ -10,7 +10,7 @@ SYSTEMD_DIR="${HOME}/.config/systemd/user"
 AUTOSTART_DIR="${HOME}/.config/autostart"
 
 WRAPPER_PATH="${BIN_DIR}/${APP_NAME}"
-APP_PATH="${SHARE_DIR}/jbl_quantum910_tray.py"
+APP_PATH="${SHARE_DIR}/jbl_quantum_810_910_tray.py"
 SERVICE_SRC="${ROOT_DIR}/systemd/jbl-quantum910-tray.service"
 SERVICE_DST="${SYSTEMD_DIR}/jbl-quantum910-tray.service"
 DESKTOP_SRC="${ROOT_DIR}/autostart/jbl-quantum910-tray.desktop"
@@ -35,13 +35,13 @@ fi
 mkdir -p "${SHARE_DIR}" "${BIN_DIR}" "${SYSTEMD_DIR}" "${AUTOSTART_DIR}" "${APPLICATIONS_DIR}" "${ICON_DIR}"
 
 echo "==> Copying app to ${APP_PATH}"
-cp -f "${ROOT_DIR}/jbl_quantum910_tray.py" "${APP_PATH}"
+cp -f "${ROOT_DIR}/jbl_quantum_810_910_tray.py" "${APP_PATH}"
 chmod +x "${APP_PATH}"
 
 echo "==> Creating wrapper at ${WRAPPER_PATH}"
 cat > "${WRAPPER_PATH}" <<EOF
 #!/usr/bin/env sh
-exec /usr/bin/python3 "\$HOME/.local/share/jbl-quantum910-tray/jbl_quantum910_tray.py" ${TRAY_ARGS} "\$@"
+exec /usr/bin/python3 "\$HOME/.local/share/jbl-quantum910-tray/jbl_quantum_810_910_tray.py" ${TRAY_ARGS} "\$@"
 EOF
 chmod +x "${WRAPPER_PATH}"
 
@@ -88,7 +88,7 @@ else
   echo
   echo "The tray starts automatically at your next login. To start it now:"
   echo "  ${WRAPPER_PATH} &"
-  echo "To stop it:  pkill -f jbl_quantum910_tray.py"
+  echo "To stop it:  pkill -f jbl_quantum_810_910_tray.py"
 fi
 
 echo
