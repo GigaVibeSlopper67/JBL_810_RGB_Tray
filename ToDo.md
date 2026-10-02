@@ -109,3 +109,17 @@ lighting value to these ranges (`MAX_SEGMENTS` / `LIGHT_MAX_SEGMENTS`,
 and the `LIGHT_RESET_SEGMENTS` / `RESET_SEGMENTS` defaults dropped from 16
 to 5. The arming GET round was also aligned to the captured order
 (`0x68, 0x67, 0x62, 0x5c, 0x75, 0x49, 0x51, 0x47, 0x4a, 0x45`).
+
+Round 6 (2026-10-02, after parsing the newest-firmware capture
+`pcaps/JBL Quantum 810 Switch between RGB Modes.pcapng`): the safe set was
+wider than Round 5 assumed. The `0x4c` 3rd byte is really an **effect/mode
+selector** (not just a tempo), and the newest firmware emits segment counts
+**1/3/5**, effect bytes **0x28/0x32/0x3c/0x46/0x4b/0x50/0x64**, and `0x4d`
+`M` bytes **0x00..0x06**. The `0x4d` last byte is a **per-segment parameter,
+not `index*2`** (it never was - the older capture already had `4d 01 01 ff fe
+00 05 08`). `SAFE_TEMPOS`/`LIGHT_SAFE_TEMPOS` and `SAFE_MODES`/
+`LIGHT_SAFE_MODES` were expanded accordingly; the hard cap remains
+`MAX_SEGMENTS`/`LIGHT_MAX_SEGMENTS = 5` (only segment counts above 5 wedge the
+MCU). The 5 captured mode recipes are recorded in `docs/RGB_SAFE_RANGES.md`.
+Two open items: the exact UI mode-name -> table mapping, and why the new
+capture has no arming GET round (see the same doc).

@@ -95,16 +95,19 @@ sequence of color **segments** whose interval distribution follows a
 
 | Report | Payload | Meaning |
 |--------|---------|---------|
-| `0x4c` | `[4c, element, tempo, segments]` | table header; tempo ∈ {`0x28`,`0x32`,`0x64`}; segments ∈ {2, 5} (never more than 5) |
-| `0x4d` | `[4d, element, index, R, G, B, M, index*2]` | one color segment; **RGB = bytes 3-5** (verified: `ff0000` renders red, `00ff00` green, `0000ff` blue); `M` = interval/duration marker ∈ {`00`,`01`,`02`,`04`,`05`}; `index` ∈ 0..4; last byte = `index*2` (0..8) |
+| `0x4c` | `[4c, element, effect, segments]` | table header; **effect** byte ∈ {`0x28`,`0x32`,`0x3c`,`0x46`,`0x4b`,`0x50`,`0x64`}; segments ∈ 1..5 (never more than 5) |
+| `0x4d` | `[4d, element, index, R, G, B, M, last]` | one color segment; **RGB = bytes 3-5** (verified: `ff0000` renders red, `00ff00` green, `0000ff` blue); `M` = interval/duration marker ∈ {`00`..`06`}; `index` ∈ 0..4; `last` = per-segment parameter (0..8), **not** `index*2` |
 | `0x4b` | `[4b, 0/1]` | lights off/on (commit; already known) |
 
-> **Safe value ranges** (from the original QuantumENGINE USB capture in
-> `pcaps/`): segment count **2 or 5 only**, tempo **`0x28`/`0x32`/`0x64`**,
-> frame index **0..4**, last byte **0..8**, and the `M` byte
-> **`0x00`/`0x01`/`0x02`/`0x04`/`0x05`**. Segment counts above 5 (the old
-> 16/32-segment "reset") wedge the lighting MCU into a strobe lockup. The
-> tray and `tools/jbl_rgb.py` hard-clamp every value to these ranges.
+> **Safe value ranges** (from the QuantumENGINE USB captures in `pcaps/`,
+> including the newest "Switch between RGB Modes" firmware capture): segment
+> count **1..5 (never above 5)**, effect byte **`0x28`/`0x32`/`0x3c`/`0x46`/
+> `0x4b`/`0x50`/`0x64`**, frame index **0..4**, last byte **0..8** (a
+> per-segment parameter, *not* `index*2`), and the `M` byte
+> **`0x00`..`0x06`**. Segment counts above 5 (the old 16/32-segment "reset")
+> wedge the lighting MCU into a strobe lockup - that is the only dangerous
+> field. The tray and `tools/jbl_rgb.py` hard-clamp every value to these
+> ranges.
 
 ### ⚠️ Deadlock warning - do NOT exceed the safe ranges
 
@@ -170,10 +173,11 @@ Verified behavior (live on a Quantum 810 via hidraw):
 - **Segment count = pulse tempo** (live, 2026-09-17): the `0x4c` segment
   count sets how many segments share the tempo cycle - a 16-segment table
   pulsed visibly "super fast" and later wedged the lighting MCU into a
-  strobe. The capture confirms QuantumENGINE only ever sends 2 or 5
-  segments, so every write (clearing pass included) is now hard-clamped to
-  `1..5` (tray `LIGHT_MAX_SEGMENTS`, CLI `MAX_SEGMENTS`); the final table
-  stays at the stock 5.
+  strobe. The captures confirm QuantumENGINE only ever sends **1..5**
+  segments (2/5 in the older firmware, 1/3/5 in the newest), so every write
+  (clearing pass included) is now hard-clamped to `1..5` (tray
+  `LIGHT_MAX_SEGMENTS`, CLI `MAX_SEGMENTS`); the final table stays at the
+  stock 5.
 
 Open questions (not yet decoded):
 
@@ -195,8 +199,9 @@ every SET_REPORT is paced (~10 ms - back-to-back writes were dropped, the
 ring's writes went missing entirely); a clearing pass overwrites the whole
 table (identical segments per element - stale colors from earlier writes
 otherwise keep cycling); and every value is hard-clamped to the safe ranges
-derived from the QuantumENGINE capture (segments 1..5, tempo 0x28/0x32/0x64,
-M 0x00/0x01/0x02/0x04/0x05). The tray runs the whole sequence on a worker
+derived from the QuantumENGINE captures (segments 1..5, effect 0x28/0x32/
+0x3c/0x46/0x4b/0x50/0x64, M 0x00..0x06). The tray runs the whole sequence on
+a worker
 thread so the UI never blocks; it skips re-arming while fresh
 (`LIGHT_ARM_TTL`, 60 s) and coalesces rapid color clicks (newest color wins):
 

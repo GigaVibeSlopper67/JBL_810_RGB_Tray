@@ -13,9 +13,9 @@ interval distribution follows a TEMPO slider. Over HID:
                0x4a, 0x45) - REQUIRED before lighting SETs take effect
                (otherwise the dongle caches them, the headset ignores
                them). Arming persists for at least several minutes.
-    SET 0x4c   [zone, tempo, segments]           table header
-    SET 0x4d   [zone, index, R, G, B, M, index*2]  one color segment; M is
-               the interval/duration marker (00/02/04/05 seen)
+    SET 0x4c   [zone, effect, segments]           table header
+    SET 0x4d   [zone, index, R, G, B, M, last]  one color segment; M is
+               the interval/duration marker, `last` a per-segment parameter
     SET 0x4b   [0|1]                             lights off/on (commit)
 
 The table applies on the lights OFF->ON transition; writes while the
@@ -31,9 +31,9 @@ Two live-verified pitfalls cause the "color mixups":
     segments ("residue"). --solid therefore writes TWO passes: a clearing
     pass of --reset-segments identical frames (default 5) then the final
     QuantumENGINE-shape table (--segments, default 5). All segment counts
-    are hard-clamped to 1..5: the QuantumENGINE capture (pcaps/) only ever
-    sends 2 or 5 segments, and counts above 5 wedge the lighting MCU into
-    a strobe lockup (the old 16/32-segment "reset").
+    are hard-clamped to 1..5: the QuantumENGINE captures (pcaps/) send 1..5
+    segments (2/5 older firmware, 1/3/5 newest), and counts above 5 wedge
+    the lighting MCU into a strobe lockup (the old 16/32-segment "reset").
 
 CHANGES DEVICE STATE: colors persist until overwritten (QuantumENGINE on
 Windows can always restore them; `--default` replays the factory table).
@@ -64,20 +64,23 @@ from jbl_status import (  # noqa: E402
 
 # --- Report IDs ------------------------------------------------------------------
 
-FEAT_TABLE_HEADER = 0x4C  # SET: [0x4c, element, tempo, segment_count]
-FEAT_TABLE_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, M, index*2]
+FEAT_TABLE_HEADER = 0x4C  # SET: [0x4c, element, tempo/effect, segment_count]
+FEAT_TABLE_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, M, last]
 FEAT_SET_LIGHTS = 0x4B    # SET: [0x4b, 0=off/1=on] (known)
 FRAME_COUNT = 5           # QuantumENGINE default segments per element
-MAX_SEGMENTS = 5          # hard cap (QuantumENGINE capture: only 2 or 5 ever sent)
+MAX_SEGMENTS = 5          # hard cap (>5 wedges the lighting MCU; QuantumENGINE sends 1..5)
 RESET_SEGMENTS = 5        # clearing-pass slots per element (safe: == MAX_SEGMENTS)
-# Value ranges observed in the original QuantumENGINE USB capture (pcaps/).
-# Anything outside these wedged the lighting MCU into a strobe lockup (the
-# old 16/32-segment "reset" is what broke it): segment counts are 2 or 5
-# only, the 0x4c tempo byte is one of 0x28/0x32/0x64, and the 0x4d M byte is
-# one of 0x00/0x01/0x02/0x04/0x05. The frame index stays 0..4 and the last
-# byte stays 0..8 (index*2) - all implied by clamping segments to <= 5.
-SAFE_TEMPOS = (0x28, 0x32, 0x64)
-SAFE_MODES = (0x00, 0x01, 0x02, 0x04, 0x05)
+# Value ranges observed in the QuantumENGINE USB captures (pcaps/), including
+# the newer "Switch between RGB Modes" capture. The only value that wedges the
+# lighting MCU into a strobe lockup is a segment count ABOVE 5 (the old
+# 16/32-segment "reset" is what broke it); every count <= 5 is safe. The 0x4c
+# tempo/effect byte and the 0x4d M byte each take a small set of observed
+# values - all emitted by QuantumENGINE itself, so all safe to reproduce. The
+# 0x4d last byte is a per-segment parameter (0..8 observed), NOT `index*2`:
+# `index*2` is only the default for the plain "breathing" shape. Segment count
+# is hard-clamped separately (MAX_SEGMENTS).
+SAFE_TEMPOS = (0x28, 0x32, 0x3C, 0x46, 0x4B, 0x50, 0x64)
+SAFE_MODES = (0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06)
 # Pause after each lighting SET_REPORT (pacing, live-verified need): the
 # dongle relays the writes to the headset over its 2.4 GHz link and drops
 # reports sent back-to-back (the ring's writes - last in the burst - went
@@ -270,11 +273,11 @@ def main() -> int:
                     help="semicolon-separated hex feature reports, "
                          "e.g. '4c 00 64 05;4d 00 00 ff 00 00 02 00' - CHANGES DEVICE STATE")
     ap.add_argument("--speed", type=lambda s: _clamp_tempo(int(s, 0)), default=None,
-                    help="speed byte for the 0x4c header (default 0x64; safe set: "
-                         "0x28/0x32/0x64 - other values are clamped to the nearest)")
+                    help="effect byte for the 0x4c header (default 0x64; safe set: "
+                         "0x28/0x32/0x3c/0x46/0x4b/0x50/0x64 - others clamped to nearest)")
     ap.add_argument("--mode", type=lambda s: _clamp_mode(int(s, 0)), default=None,
                     help="M byte for the 0x4d frames (default: 0x02 zone 0 / 0x05 "
-                         "zone 1; safe set 0x00/0x01/0x02/0x04/0x05 - other values "
+                         "zone 1; safe set 0x00..0x06 - other values "
                          "are clamped to the nearest)")
     ap.add_argument("--segments", type=lambda s: _clamp_segments(int(s, 0)),
                     default=FRAME_COUNT, metavar="N",

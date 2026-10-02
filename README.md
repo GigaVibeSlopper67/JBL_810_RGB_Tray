@@ -215,11 +215,11 @@ events after a write).
 >
 > | Field | Safe range |
 > |-------|------------|
-> | `0x4c` segment count | **2 or 5** (never more than 5) |
-> | `0x4c` tempo byte | **`0x28` / `0x32` / `0x64`** |
+> | `0x4c` segment count | **1–5** (never more than 5) |
+> | `0x4c` effect byte | **`0x28`/`0x32`/`0x3c`/`0x46`/`0x4b`/`0x50`/`0x64`** |
 > | `0x4d` frame index | **0–4** |
-> | `0x4d` last byte | **0–8** (`index*2`) |
-> | `0x4d` M byte | **`0x00` / `0x01` / `0x02` / `0x04` / `0x05`** |
+> | `0x4d` last byte | **0–8** (per-segment parameter, not `index*2`) |
+> | `0x4d` M byte | **`0x00`–`0x06`** |
 >
 > Writing outside these ranges (e.g. a segment count of 16 or 32) **deadlocks
 > the lighting MCU into a strobe** and is **not** recoverable by factory reset
