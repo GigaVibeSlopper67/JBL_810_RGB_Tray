@@ -45,7 +45,9 @@ The confirmed battery pattern for this headset is:
 - **`setup_udev_rules.sh`**: installs the udev rules (no plugdev group needed)
 - **`install.sh` / `uninstall.sh`**: installs/removes as a login service Use --enable-controls flag to enable experimental control features.
 - **`systemd/`**: `systemd --user` unit file
-- **`autostart/`**: alternative via `.desktop`
+- **`autostart/`**: alternative login autostart via `.desktop`
+- **`applications/`**: launcher `.desktop` entry (appears in the desktop application menu, e.g. KDE Kickoff)
+- **`icons/`**: scalable SVG tray/launcher icon
 - **`tools/`**: auxiliary/experimental capture/analysis scripts
 - **`docs/`**: detailed documentation (permissions, troubleshooting, etc.)
 

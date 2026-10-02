@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=JBL Quantum 910/810 Battery Tray
+Comment=Monitor battery and control JBL Quantum 910/810 headsets
+Exec=jbl-quantum910-tray
+Icon=jbl-quantum910-tray
+Terminal=false
+Categories=Utility;
+Keywords=battery;headset;JBL;Quantum;tray;

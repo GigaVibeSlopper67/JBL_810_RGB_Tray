@@ -15,6 +15,11 @@ SERVICE_SRC="${ROOT_DIR}/systemd/jbl-quantum910-tray.service"
 SERVICE_DST="${SYSTEMD_DIR}/jbl-quantum910-tray.service"
 DESKTOP_SRC="${ROOT_DIR}/autostart/jbl-quantum910-tray.desktop"
 DESKTOP_DST="${AUTOSTART_DIR}/jbl-quantum910-tray.desktop"
+APPLICATIONS_DIR="${HOME}/.local/share/applications"
+ICON_DIR="${HOME}/.local/share/icons/hicolor/scalable/apps"
+LAUNCHER_SRC="${ROOT_DIR}/applications/jbl-quantum910-tray.desktop"
+LAUNCHER_DST="${APPLICATIONS_DIR}/jbl-quantum910-tray.desktop"
+ICON_SRC="${ROOT_DIR}/icons/jbl-quantum910-tray.svg"
 
 # Any arguments are forwarded to the tray on every launch (baked into the
 # wrapper), e.g.: ./install.sh --enable-controls --notify-mute
@@ -27,7 +32,7 @@ if [[ ! -x /usr/bin/python3 ]]; then
   exit 1
 fi
 
-mkdir -p "${SHARE_DIR}" "${BIN_DIR}" "${SYSTEMD_DIR}" "${AUTOSTART_DIR}"
+mkdir -p "${SHARE_DIR}" "${BIN_DIR}" "${SYSTEMD_DIR}" "${AUTOSTART_DIR}" "${APPLICATIONS_DIR}" "${ICON_DIR}"
 
 echo "==> Copying app to ${APP_PATH}"
 cp -f "${ROOT_DIR}/jbl_quantum910_tray.py" "${APP_PATH}"
@@ -39,6 +44,18 @@ cat > "${WRAPPER_PATH}" <<EOF
 exec /usr/bin/python3 "\$HOME/.local/share/jbl-quantum910-tray/jbl_quantum910_tray.py" ${TRAY_ARGS} "\$@"
 EOF
 chmod +x "${WRAPPER_PATH}"
+
+echo "==> Installing launcher entry and icon"
+# Bake the absolute wrapper path into Exec so the menu entry works even when
+# ~/.local/bin is not on the launcher's PATH.
+sed "s|^Exec=.*|Exec=${WRAPPER_PATH}|" "${LAUNCHER_SRC}" > "${LAUNCHER_DST}"
+cp -f "${ICON_SRC}" "${ICON_DIR}/jbl-quantum910-tray.svg"
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t "${HOME}/.local/share/icons/hicolor" 2>/dev/null || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database "${APPLICATIONS_DIR}" 2>/dev/null || true
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
   echo "==> Installing systemd --user service"
