@@ -7,6 +7,7 @@
 > I had the audacity to start this without any pcaps. It wedged my RBG MCU at some point by sending way 
 > too many RGB segments and it can't unwedge by replug like with the Razer Barracuda Pro. 
 > It is stuck in a strobe. The Values are clamped to their max now, so the findings should be safe.
+> Update: I can confirm that the tool is safe now with a new actual device.
 
 **Real** battery monitor for the JBL Quantum910 and Quantum810: shows the **battery % in the tray** and can start automatically at login via **`systemd --user`**.
 
