@@ -409,6 +409,10 @@ class Notifier:
 
 ICON_DIR = os.path.expanduser("~/.cache/jbl-quantum-tray/icons")
 
+# Small tag drawn at the bottom of the badge icon so the JBL tray icon is
+# distinguishable from other battery icons in the panel.
+BADGE_LABEL = "JBL"
+
 _DIGIT_FONT = {
     "0": "111101101101111",
     "1": "010110010010111",
@@ -422,9 +426,18 @@ _DIGIT_FONT = {
     "9": "111101111001111",
 }
 
+# 3x5 pixel glyphs for the bottom badge label (e.g. "JBL"), used only in the
+# no-Pillow fallback path. The Pillow path renders the label with a real font.
+_LABEL_FONT = {
+    "J": "001001001101010",
+    "B": "110101110101110",
+    "L": "100100100100111",
+}
+
 
 def _badge_pixels(
-    percent: int, size: int = 64, supersample: int = 3, draw_digits: bool = True
+    percent: int, size: int = 64, supersample: int = 3, draw_digits: bool = True,
+    label: Optional[str] = None,
 ) -> bytes:
     """Build RGBA pixels for a battery badge icon showing the percentage.
 
@@ -522,6 +535,31 @@ def _badge_pixels(
                         for xx in range(blk):
                             put(x_off + c * blk + xx, py, digit_rgba)
 
+    # Bottom label (e.g. "JBL"), smaller than the digits, centered in the
+    # free space below the battery body (used only in the no-Pillow fallback).
+    if label and draw_digits:
+        ltext = str(label).upper()
+        ldscale = 2
+        lblk = ldscale * supersample
+        lcell = 3 * lblk
+        lgap = lblk
+        lrow_h = 5 * lblk
+        ltotal_w = len(ltext) * lcell + (len(ltext) - 1) * lgap
+        label_x0 = (bx0 + bx1) // 2 - ltotal_w // 2
+        label_y0 = (by1 + big) // 2 - lrow_h // 2
+        for idx, char in enumerate(ltext):
+            rows = _LABEL_FONT.get(char)
+            if not rows:
+                continue
+            x_off = label_x0 + idx * (lcell + lgap)
+            for r in range(5):
+                for c in range(3):
+                    if rows[r * 3 + c] == "1":
+                        for yy in range(lblk):
+                            py = label_y0 + r * lblk + yy
+                            for xx in range(lblk):
+                                put(x_off + c * lblk + xx, py, digit_rgba)
+
     # Box-downscale to the final size.
     out = bytearray(size * size * 4)
     n = supersample * supersample
@@ -589,7 +627,30 @@ def _draw_badge_digits(img, percent: int) -> None:
         draw.text((29 - w // 2, 28 - h // 2), text, font=font, fill=(244, 247, 250, 255))
 
 
-def _write_badge_png(percent: int, path: str) -> bool:
+def _draw_badge_label(img, label: str) -> None:
+    """Draw a small tag (e.g. "JBL") at the bottom of the badge icon."""
+    from PIL import ImageDraw  # type: ignore
+
+    text = str(label)
+    draw = ImageDraw.Draw(img)
+    sz = 16
+    while sz > 8:
+        font = _load_badge_font(sz)
+        if font is None:
+            return  # no font available; leave the badge without a label
+        if draw.textlength(text, font=font) <= 40:
+            break
+        sz -= 2
+    # Centered in the free space below the battery body.
+    try:
+        draw.text((29, 55), text, font=font, fill=(244, 247, 250, 255), anchor="mm")
+    except TypeError:  # Pillow < 8 without anchor support
+        bbox = draw.textbbox((0, 0), text, font=font)
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text((29 - w // 2, 55 - h // 2), text, font=font, fill=(244, 247, 250, 255))
+
+
+def _write_badge_png(percent: int, path: str, label: Optional[str] = None) -> bool:
     """Write the numeric badge icon as a PNG file. Returns True on success."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     size = 64
@@ -600,13 +661,15 @@ def _write_badge_png(percent: int, path: str) -> bool:
         rgba = _badge_pixels(percent, size, draw_digits=False)
         img = Image.frombytes("RGBA", (size, size), rgba)
         _draw_badge_digits(img, percent)
+        if label:
+            _draw_badge_label(img, label)
         img.save(path)
         return True
     except ImportError:
         pass
 
     # Fallback: blocky pixel-font digits + minimal PNG writer (zlib + struct).
-    rgba = _badge_pixels(percent, size)
+    rgba = _badge_pixels(percent, size, label=label)
     import struct
     import zlib
 
@@ -1324,7 +1387,7 @@ class PyUsbBatteryReader:
 
 
 class BatteryTrayApp:
-    def __init__(self, refresh_seconds: float, prefer_pyusb: bool, pyusb_detach: bool, numeric_icon: bool = False, enable_controls: bool = False, notifications: bool = True, notify_mute: bool = False, lighting_delay: float = LIGHT_SET_DELAY, lighting_reset_segments: int = LIGHT_RESET_SEGMENTS):
+    def __init__(self, refresh_seconds: float, prefer_pyusb: bool, pyusb_detach: bool, numeric_icon: bool = True, enable_controls: bool = False, notifications: bool = True, notify_mute: bool = False, lighting_delay: float = LIGHT_SET_DELAY, lighting_reset_segments: int = LIGHT_RESET_SEGMENTS):
         self.refresh_seconds = max(0.2, refresh_seconds)
         self.prefer_pyusb = prefer_pyusb
 
@@ -1385,6 +1448,7 @@ class BatteryTrayApp:
         # (some desktops hide the AppIndicator label).
         self._icon_dir = ICON_DIR
         os.makedirs(self._icon_dir, exist_ok=True)
+        self._badge_label: str = BADGE_LABEL
         self._last_badge_percent: Optional[int] = None
         self._last_icon: Optional[str] = None
         self._numeric_icons_ok = None if numeric_icon else False  # None = not tried yet
@@ -1859,7 +1923,7 @@ class BatteryTrayApp:
             return
         os.makedirs(self._icon_dir, exist_ok=True)
         png_path = os.path.join(self._icon_dir, f"jbl-quantum-batt-{percent}.png")
-        if not _write_badge_png(percent, png_path):
+        if not _write_badge_png(percent, png_path, self._badge_label):
             self._numeric_icons_ok = False
             return
         # The absolute file path is supported by libappindicator: it loads
@@ -1867,16 +1931,15 @@ class BatteryTrayApp:
         self.indicator.set_icon_full(png_path, f"{self._model_name} Battery {percent}%")
         self._last_badge_percent = percent
 
-    def _battery_icon_name(self, percent: Optional[int], is_muted: bool = False) -> str:
-        """Icon name for the battery level (mute status respected).
+    def _battery_icon_name(self, percent: Optional[int]) -> str:
+        """Icon name for the battery level.
 
         Prefers the theme's fine-grained numeric battery series
         (battery-050-symbolic etc., the same icons the desktop battery
         widget uses) and falls back to the freedesktop standard names
-        (battery-full/good/low/caution) when those are unavailable.
+        (battery-full/good/low/caution) when those are unavailable. Mute is
+        shown in the label/tooltip instead of replacing the battery icon.
         """
-        if is_muted:
-            return "microphone-sensitivity-muted-symbolic"
         if percent is None:
             return "battery-missing-symbolic"
 
@@ -2152,7 +2215,7 @@ class BatteryTrayApp:
 
     def _render(self):
         percent = self.last_sample.percent if self.last_sample else None
-        icon = self._battery_icon_name(percent, self._is_muted)
+        icon = self._battery_icon_name(percent)
 
         # Some desktops (e.g. GNOME with the AppIndicator extension) hide the
         # indicator label and tooltips, so draw the percentage into the icon
@@ -2323,13 +2386,13 @@ def main() -> int:
     parser.add_argument(
         "--numeric-icon",
         action="store_true",
-        help="Draw the percentage into the icon as a custom badge "
-        "(default: native themed battery icons)",
+        help="Draw the percentage into the icon as a custom badge with a "
+        "'JBL' tag (now the default)",
     )
     parser.add_argument(
         "--no-numeric-icon",
         action="store_true",
-        help="(compat) Native themed battery icons (now the default)",
+        help="Use native themed battery icons instead of the custom badge",
     )
     parser.add_argument(
         "--enable-controls",
@@ -2372,7 +2435,7 @@ def main() -> int:
         refresh_seconds=args.refresh,
         prefer_pyusb=(not args.prefer_hidraw),
         pyusb_detach=args.pyusb_detach_kernel,
-        numeric_icon=(args.numeric_icon and not args.no_numeric_icon),
+        numeric_icon=(not args.no_numeric_icon),
         enable_controls=args.enable_controls,
         notifications=(not args.no_notifications),
         notify_mute=args.notify_mute,

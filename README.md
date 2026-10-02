@@ -122,17 +122,19 @@ sudo dnf install -y python3-gobject gtk3 libayatana-appindicator-gtk3
 
 ### Run manually
 
-The tray icon itself shows the battery % (drawn into the icon, since some
-desktops like GNOME hide indicator labels), and the tray menu shows
-`Battery: 45%`. On KDE Plasma, hovering the icon also shows the percentage in
-the tooltip:
+The tray icon itself shows the battery % (drawn into the icon as a custom
+badge, since some desktops like GNOME hide indicator labels). A small "JBL"
+tag is drawn under the battery so it's easy to tell apart from other battery
+icons in the panel, and the icon always shows the battery — it never turns
+into a mute symbol (mic mute is shown in the tooltip/menu and the text label
+instead). The tray menu also shows `Battery: 45%`. On KDE Plasma, hovering the
+icon shows the full status in the tooltip:
 
 ```bash
 python3 ./jbl_quantum910_tray.py
-# The tray shows native themed battery icons (crisp at any size/DPI); the
-# percentage is in the tooltip and the menu. To draw the percentage into
-# the icon as a badge instead:
-python3 ./jbl_quantum910_tray.py --numeric-icon
+# Default: a custom badge with the percentage + a "JBL" tag. To use the
+# desktop's native themed battery icons instead (no percentage/tag drawn in):
+python3 ./jbl_quantum910_tray.py --no-numeric-icon
 ```
 
 Useful options:
