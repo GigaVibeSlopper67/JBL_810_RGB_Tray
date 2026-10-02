@@ -174,7 +174,9 @@ Verified behavior:
 
 - A solid color is written as **5 identical segments per element** and renders
   as a **breathing-style pulse** (the steady "Solid" effect encoding is still
-  unknown).
+  unknown). Each element (logo / ring) can be colored independently, and each
+  of the 5 segments can take its own color (the factory table itself uses a
+  magenta accent on one segment).
 - Lighting SETs are ignored unless the dongle is **armed** first (the
   QuantumENGINE connect-time GET round - both the tray and the CLI do this
   automatically). The armed state persists for several minutes.
@@ -184,8 +186,11 @@ Verified behavior:
   overwritten. `--default` replays the factory teal table (`33 ff cc`),
   QuantumENGINE on Windows can always restore them.
 
-In the tray (with `--enable-controls`): menu -> **Lighting -> Pick color…**
-(GTK color chooser) or the presets **Red / Green / Blue / White / Teal (factory)**.
+In the tray (with `--enable-controls`): menu -> **Lighting** -> **Solid color…**
+(both elements), the presets **Red / Green / Blue / White / Teal (factory)**,
+**Logo color…** / **Ring color…** (set one element independently),
+**Custom (segments)…** (a 2×5 grid of color swatches - logo/ring × 5 segments)
+or **Reset to factory**.
 
 CLI (`tools/jbl_rgb.py`):
 

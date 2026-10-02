@@ -83,6 +83,14 @@ LIGHT_MODES = {0: 0x02, 1: 0x05}  # per-segment interval marker (M byte)
 # separately (LIGHT_MAX_SEGMENTS).
 LIGHT_SAFE_TEMPOS = (0x28, 0x32, 0x3C, 0x46, 0x4B, 0x50, 0x64)
 LIGHT_SAFE_MODES = (0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06)
+# Factory lighting table (QuantumENGINE pushes this on connect; mirrors
+# tools/jbl_rgb.py FACTORY_FRAMES): teal 33 ff cc with a magenta ff 00 cc
+# accent frame at index 2, per element. Used as the initial in-memory table
+# and by the "Reset to factory" action.
+LIGHT_FACTORY_FRAMES = {
+    0: [(0x33, 0xFF, 0xCC), (0x33, 0xFF, 0xCC), (0xFF, 0x00, 0xCC), (0x33, 0xFF, 0xCC), (0x33, 0xFF, 0xCC)],
+    1: [(0x33, 0xFF, 0xCC), (0x33, 0xFF, 0xCC), (0xFF, 0x00, 0xCC), (0x33, 0xFF, 0xCC), (0x33, 0xFF, 0xCC)],
+}
 # Lighting write recipe (live-tuned): (1) pace every SET_REPORT - writes
 # fired back-to-back can be dropped by the dongle/2.4 GHz link (live: the
 # ring's writes - last in the burst - went missing entirely); (2) clear the
@@ -112,7 +120,7 @@ def _import_appindicator():
         import gi  # type: ignore
 
         gi.require_version("Gtk", "3.0")
-        from gi.repository import Gtk, GLib  # type: ignore
+        from gi.repository import Gtk, Gdk, GLib  # type: ignore
 
         try:
             gi.require_version("AppIndicator3", "0.1")
@@ -121,7 +129,7 @@ def _import_appindicator():
             gi.require_version("AyatanaAppIndicator3", "0.1")
             from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore
 
-        return Gtk, GLib, AppIndicator
+        return Gtk, GLib, Gdk, AppIndicator
     except Exception as e:
         print("Error: tray dependencies not found (PyGObject/AppIndicator).", file=sys.stderr)
         print(f"Details: {e}", file=sys.stderr)
@@ -262,16 +270,21 @@ def parse_status_from_packet(packet: bytes) -> Optional[StatusSample]:
     return None
 
 
-def build_lighting_reports(color: tuple, element: int = 0, tempo: int = LIGHT_TEMPO,
+def build_lighting_reports(colors, element: int = 0, tempo: int = LIGHT_TEMPO,
                            mode: Optional[int] = None,
-                           segments: int = LIGHT_SEGMENTS) -> list:
-    """Feature reports that write one color to a lighting element.
+                           segments: Optional[int] = None) -> list:
+    """Feature reports that write one or more colors to a lighting element.
 
     Decoded from the HeadsetControl #357 USB captures and verified live on
-    a Quantum 810 (see docs/HID_REPORTS.md). A color is expressed as
-    `segments` identical frames; the headset renders it with its
-    breathing-style effect (QuantumENGINE distributes colors over tempo
-    intervals). Element 0 = logo, 1 = ring.
+    a Quantum 810 (see docs/HID_REPORTS.md). Element 0 = logo, 1 = ring.
+
+    `colors` is either a single ``(r, g, b)`` tuple (written as `segments`
+    identical frames, the plain breathing shape) or a sequence of per-segment
+    ``(r, g, b)`` tuples (one frame per segment, so distinct colors per
+    segment are possible). When `segments` is None it defaults to the
+    QuantumENGINE count (5) for a single color, or to ``len(colors)`` for a
+    sequence. The headset renders the result with its breathing-style effect
+    (QuantumENGINE distributes colors over tempo intervals).
 
     Writing more than the QuantumENGINE-default 5 segments overwrites the
     whole device table (a full reset: stale segments from earlier colors
@@ -287,14 +300,28 @@ def build_lighting_reports(color: tuple, element: int = 0, tempo: int = LIGHT_TE
     the lighting MCU (the old 16-segment "reset" locked the RGB into a
     strobe).
     """
-    r, g, b = color
-    segments = max(1, min(int(segments), LIGHT_MAX_SEGMENTS))
+    # Normalize: a bare 3-element integer sequence is a single color;
+    # otherwise treat `colors` as a per-segment color sequence.
+    if len(colors) == 3 and all(isinstance(c, int) for c in colors):
+        if segments is None:
+            segments = LIGHT_SEGMENTS
+        segments = max(1, min(int(segments), LIGHT_MAX_SEGMENTS))
+        frame_colors = [tuple(colors)] * segments
+    else:
+        seq = [tuple(c) for c in colors]
+        if segments is None:
+            segments = len(seq)
+        segments = max(1, min(int(segments), LIGHT_MAX_SEGMENTS))
+        frame_colors = seq[:segments]
+        while len(frame_colors) < segments:
+            frame_colors.append(frame_colors[-1] if frame_colors else (0, 0, 0))
     tempo = _clamp_light_tempo(tempo)
     if mode is None:
         mode = LIGHT_MODES.get(element, 0x02)
     mode = _clamp_light_mode(mode)
     reports = [bytes([FEAT_LIGHT_HEADER, element, tempo, segments])]
     for i in range(segments):
+        r, g, b = frame_colors[i]
         reports.append(bytes([FEAT_LIGHT_FRAME, element, i, r, g, b, mode, i * 2]))
     return reports
 
@@ -1301,7 +1328,7 @@ class BatteryTrayApp:
         self.refresh_seconds = max(0.2, refresh_seconds)
         self.prefer_pyusb = prefer_pyusb
 
-        self.Gtk, self.GLib, self.AppIndicator = _import_appindicator()
+        self.Gtk, self.GLib, self.Gdk, self.AppIndicator = _import_appindicator()
 
         self.last_sample: Optional[BatterySample] = None
         self.last_mute_sample: Optional[MuteSample] = None
@@ -1329,8 +1356,12 @@ class BatteryTrayApp:
         self.lighting_delay = max(0.0, float(lighting_delay))
         self.lighting_reset_segments = max(1, int(lighting_reset_segments))
         self._lighting_busy = False
-        self._lighting_pending: Optional[tuple] = None
+        self._lighting_pending: Optional[dict] = None
         self._lighting_abort = False
+        # In-memory lighting table (element 0 = logo, 1 = ring -> list of
+        # LIGHT_SEGMENTS colors). There is no read-back for the table, so it
+        # is session-only; initialized to the QuantumENGINE factory table.
+        self._lighting_table = self._factory_lighting_table()
 
         # Desktop notifications (low battery, dongle connect/disconnect;
         # mute changes only with --notify-mute) + battery history/estimate.
@@ -1498,10 +1529,11 @@ class BatteryTrayApp:
             self._sidetone_menu_item = sidetone_item
             menu.append(sidetone_item)
 
-            # RGB lighting (logo + ring elements, Quantum 810): pick a color
-            # or use a preset. Applies as a breathing-style color effect.
+            # RGB lighting (logo + ring elements, Quantum 810): solid color,
+            # per-element color, or a per-segment custom editor. Applies as a
+            # breathing-style color effect.
             lighting_menu = self.Gtk.Menu()
-            pick_item = self.Gtk.MenuItem(label="Pick color…")
+            pick_item = self.Gtk.MenuItem(label="Solid color…")
             pick_item.connect("activate", lambda *_: self._pick_lighting_color())
             lighting_menu.append(pick_item)
             for name, rgb in (("Red", (255, 0, 0)), ("Green", (0, 255, 0)),
@@ -1510,6 +1542,20 @@ class BatteryTrayApp:
                 preset = self.Gtk.MenuItem(label=f"Color: {name}")
                 preset.connect("activate", lambda _w, c=rgb: self._set_lighting_color(c))
                 lighting_menu.append(preset)
+            lighting_menu.append(self.Gtk.SeparatorMenuItem())
+            logo_item = self.Gtk.MenuItem(label="Logo color…")
+            logo_item.connect("activate", lambda *_: self._pick_lighting_color(0))
+            lighting_menu.append(logo_item)
+            ring_item = self.Gtk.MenuItem(label="Ring color…")
+            ring_item.connect("activate", lambda *_: self._pick_lighting_color(1))
+            lighting_menu.append(ring_item)
+            lighting_menu.append(self.Gtk.SeparatorMenuItem())
+            segments_item = self.Gtk.MenuItem(label="Custom (segments)…")
+            segments_item.connect("activate", lambda *_: self._edit_lighting_segments())
+            lighting_menu.append(segments_item)
+            reset_item = self.Gtk.MenuItem(label="Reset to factory")
+            reset_item.connect("activate", lambda *_: self._set_lighting(self._factory_lighting_table()))
+            lighting_menu.append(reset_item)
             lighting_item = self.Gtk.MenuItem(label="Lighting")
             lighting_item.set_submenu(lighting_menu)
             menu.append(lighting_item)
@@ -1600,13 +1646,34 @@ class BatteryTrayApp:
         finally:
             self._sidetone_radios_syncing = False
 
-    def _set_lighting_color(self, rgb: tuple) -> None:
-        """Write one color to both lighting elements (logo + ring).
+    def _factory_lighting_table(self) -> dict:
+        """Build a fresh factory-default lighting table (logo + ring)."""
+        return {
+            element: [LIGHT_FACTORY_FRAMES[element][i % LIGHT_SEGMENTS]
+                      for i in range(LIGHT_SEGMENTS)]
+            for element in LIGHT_ELEMENTS
+        }
+
+    def _set_lighting_color(self, rgb: tuple, element: Optional[int] = None) -> None:
+        """Apply one color to every segment of an element (None = both).
+
+        Thin wrapper over _set_lighting for the solid-color presets and the
+        per-element color pickers.
+        """
+        elements = LIGHT_ELEMENTS if element is None else (element,)
+        table = {el: list(self._lighting_table[el]) for el in LIGHT_ELEMENTS}
+        for el in elements:
+            table[el] = [tuple(rgb)] * LIGHT_SEGMENTS
+        self._set_lighting(table)
+
+    def _set_lighting(self, table: dict) -> None:
+        """Write a per-element lighting table (logo + ring; each a list of
+        LIGHT_SEGMENTS colors) to the device.
 
         CHANGES DEVICE STATE - only reachable with --enable-controls.
         Runs in a worker thread: the paced write sequence takes ~0.5 s and
-        must not block the GTK main loop. Rapid clicks are coalesced: the
-        newest color is applied right after the in-flight write (nothing is
+        must not block the GTK main loop. Rapid changes are coalesced: the
+        newest table is applied right after the in-flight write (nothing is
         dropped).
 
         Sequence (verified live): arm via the QuantumENGINE GET round
@@ -1617,38 +1684,45 @@ class BatteryTrayApp:
         """
         if self.hidraw_reader is None:
             return
+        table = {el: [tuple(c) for c in table.get(el) or [(0, 0, 0)]]
+                 for el in LIGHT_ELEMENTS}
+        self._lighting_table = table
         if self._lighting_busy:
-            self._lighting_pending = tuple(rgb)
-            _log("Lighting: change in progress; queueing the new color")
+            self._lighting_pending = table
+            _log("Lighting: change in progress; queueing the new table")
             return
         self._lighting_pending = None
         self._lighting_busy = True
         self._lighting_abort = False
-        _log(f"Lighting: setting #{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X} (logo+ring)")
+        _log("Lighting: applying a %d-element table" % len(table))
 
         def worker() -> None:
-            color = tuple(rgb)
+            pending = table
             try:
                 while True:
-                    self._apply_lighting_color(color)
-                    pending = self._lighting_pending
+                    self._apply_lighting(pending)
+                    nxt = self._lighting_pending
                     self._lighting_pending = None
-                    if pending is None:
+                    if nxt is None:
                         break
-                    self._lighting_abort = False  # explicit new color
-                    color = tuple(pending)
+                    self._lighting_abort = False  # explicit new table
+                    self._lighting_table = nxt
+                    pending = nxt
             except Exception as e:  # never take the tray down
-                _log(f"Lighting: error applying color: {e}")
+                _log(f"Lighting: error applying table: {e}")
             finally:
                 self._lighting_busy = False
 
         threading.Thread(target=worker, daemon=True,
                          name="jbl-lighting").start()
 
-    def _apply_lighting_color(self, rgb: tuple) -> None:
-        """Paced lighting table write (worker thread; no GTK calls here)."""
-        r, g, b = rgb
-        hexname = f"#{r:02X}{g:02X}{b:02X}"
+    def _apply_lighting(self, table: dict) -> None:
+        """Paced lighting table write (worker thread; no GTK calls here).
+
+        `table` maps element (0 = logo, 1 = ring) to a list of colors (one
+        per segment). Each element is cleared then written with its own
+        colors, so logo and ring can differ and segments can be distinct.
+        """
         delay = self.lighting_delay
         reset_segments = self.lighting_reset_segments
         reader = self.hidraw_reader
@@ -1664,22 +1738,24 @@ class BatteryTrayApp:
         reader.send_feature_bytes(bytes([0x4B, 0x00]), delay=delay)
         ok = True
         # Clearing pass: overwrite every slot (stale colors from earlier
-        # changes or the factory table otherwise keep cycling).
+        # changes or the factory table otherwise keep cycling). Each element
+        # is cleared to its first segment color.
         for element in LIGHT_ELEMENTS:
-            for rep in build_lighting_reports((r, g, b), element,
+            colors = table.get(element) or [(0, 0, 0)]
+            for rep in build_lighting_reports(colors[0], element,
                                               segments=reset_segments):
                 if not reader.send_feature_bytes(rep, delay=delay):
                     ok = False
                     break
             if not ok:
                 break
-        # Final pass: QuantumENGINE-shape table (5 segments - the captures
+        # Final pass: QuantumENGINE-shape table (1..5 segments - the captures
         # show QuantumENGINE sends 1..5; counts above 5 wedge the lighting
         # MCU, and build_lighting_reports clamps to <= 5).
         if ok and not self._lighting_abort:
             for element in LIGHT_ELEMENTS:
-                for rep in build_lighting_reports((r, g, b), element,
-                                                  segments=LIGHT_SEGMENTS):
+                colors = table.get(element) or [(0, 0, 0)]
+                for rep in build_lighting_reports(colors, element):
                     if not reader.send_feature_bytes(rep, delay=delay):
                         ok = False
                         break
@@ -1688,16 +1764,21 @@ class BatteryTrayApp:
         if not self._lighting_abort and ok:
             reader.send_feature_bytes(bytes([0x4B, 0x01]), delay=delay)
             self._lights_on = True
-            _log(f"Lighting set to {hexname} (clear {reset_segments} + final {LIGHT_SEGMENTS} segments per element, tempo {LIGHT_TEMPO}, applied via lights off->on)")
+            _log("Lighting table applied (clear %d + final segments per element, applied via lights off->on)" % reset_segments)
         elif not self._lighting_abort:
-            _log(f"Lighting: failed to write the {hexname} table")
+            _log("Lighting: failed to write the table")
         else:
-            _log(f"Lighting: write to {hexname} aborted (lights toggled meanwhile)")
+            _log("Lighting: write aborted (lights toggled meanwhile)")
         self.GLib.idle_add(self._render)
 
-    def _pick_lighting_color(self) -> None:
-        """Open a color chooser and apply the picked color to both elements."""
-        dialog = self.Gtk.ColorChooserDialog(title=f"{self._model_name} lighting color")
+    def _pick_lighting_color(self, element: Optional[int] = None) -> None:
+        """Open a color chooser and apply the picked color.
+
+        `element` None = both logo and ring; 0 = logo, 1 = ring. The picked
+        color is written to every segment of the target element(s).
+        """
+        label = "logo + ring" if element is None else ("logo" if element == 0 else "ring")
+        dialog = self.Gtk.ColorChooserDialog(title=f"{self._model_name} lighting color ({label})")
         dialog.set_use_alpha(False)
         try:
             if dialog.run() == self.Gtk.ResponseType.OK:
@@ -1705,9 +1786,60 @@ class BatteryTrayApp:
                 rgb = (int(round(rgba.red * 255)),
                        int(round(rgba.green * 255)),
                        int(round(rgba.blue * 255)))
-                self._set_lighting_color(rgb)
+                self._set_lighting_color(rgb, element)
         finally:
             dialog.destroy()
+
+    def _edit_lighting_segments(self) -> None:
+        """Open a 2x5 grid of color buttons (logo + ring x 5 segments).
+
+        Apply writes the per-segment colors back as a lighting table; Reset
+        to factory restores the QuantumENGINE default (teal + magenta accent).
+        """
+        dialog = self.Gtk.Dialog(title=f"{self._model_name} lighting segments",
+                                 modal=True)
+        dialog.add_button("Cancel", self.Gtk.ResponseType.CANCEL)
+        dialog.add_button("Reset to factory", 1)
+        dialog.add_button("Apply", self.Gtk.ResponseType.OK)
+        box = dialog.get_content_area()
+        box.set_border_width(12)
+        grid = self.Gtk.Grid()
+        grid.set_column_spacing(8)
+        grid.set_row_spacing(8)
+        labels = {0: "Logo", 1: "Ring"}
+        buttons = {}  # (element, index) -> Gtk.ColorButton
+        for el in LIGHT_ELEMENTS:
+            lab = self.Gtk.Label(label=labels[el])
+            lab.set_halign(self.Gtk.Align.START)
+            grid.attach(lab, 0, el, 1, 1)
+            for i in range(LIGHT_SEGMENTS):
+                btn = self.Gtk.ColorButton()
+                btn.set_use_alpha(False)
+                r, g, b = self._lighting_table[el][i]
+                btn.set_rgba(self.Gdk.RGBA(r / 255.0, g / 255.0, b / 255.0, 1.0))
+                btn.set_tooltip_text(f"{labels[el]} segment {i + 1}")
+                grid.attach(btn, i + 1, el, 1, 1)
+                buttons[(el, i)] = btn
+        box.pack_start(grid, True, True, 0)
+        box.show_all()
+
+        def read_table() -> dict:
+            table = {}
+            for el in LIGHT_ELEMENTS:
+                table[el] = []
+                for i in range(LIGHT_SEGMENTS):
+                    rgba = buttons[(el, i)].get_rgba()
+                    table[el].append((int(round(rgba.red * 255)),
+                                      int(round(rgba.green * 255)),
+                                      int(round(rgba.blue * 255))))
+            return table
+
+        response = dialog.run()
+        if response == self.Gtk.ResponseType.OK:
+            self._set_lighting(read_table())
+        elif response == 1:  # Reset to factory
+            self._set_lighting(self._factory_lighting_table())
+        dialog.destroy()
 
     def _quit(self):
         try:

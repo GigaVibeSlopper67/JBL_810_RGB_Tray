@@ -2,6 +2,22 @@
 
 ## Latest updates (2026-09-17)
 
+### Granular RGB lighting from the tray (per-element + per-segment)
+The tray's `Lighting` submenu (behind `--enable-controls`) now exposes the
+full per-element / per-segment model the protocol supports:
+- **Solid color…** (both elements) and the existing presets Red/Green/Blue/
+  White/Teal, plus new **Logo color…** and **Ring color…** pickers that set
+  one element independently.
+- **Custom (segments)…** opens a 2×5 grid of `Gtk.ColorButton` swatches
+  (logo/ring × the 5 segments) so each segment can take its own color.
+- **Reset to factory** restores the QuantumENGINE default table (teal
+  `33 ff cc` with a magenta `ff 00 cc` accent on segment 2).
+- Internals: a new in-memory `_lighting_table` (element -> 5 colors) drives
+  `_set_lighting` / `_apply_lighting`; `build_lighting_reports` now accepts a
+  per-segment color list in addition to a single color. All safety invariants
+  are unchanged (1–5 segment clamp, safe tempo/M sets, pacing, arming, the
+  lights off->on commit, and the lights-toggle abort).
+
 ### RGB color mixups fixed (tray + `tools/jbl_rgb.py`)
 Diagnosed from the `ToDo.md` observations and fixed in both write paths:
 - **Dropped writes**: all lighting SET_REPORTs were sent back-to-back; the

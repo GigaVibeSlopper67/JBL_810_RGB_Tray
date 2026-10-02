@@ -123,3 +123,12 @@ not `index*2`** (it never was - the older capture already had `4d 01 01 ff fe
 MCU). The 5 captured mode recipes are recorded in `docs/RGB_SAFE_RANGES.md`.
 Two open items: the exact UI mode-name -> table mapping, and why the new
 capture has no arming GET round (see the same doc).
+
+Round 7 (2026-10-02, granular RGB from the tray): the tray's `Lighting`
+submenu now exposes per-element and per-segment control - **Solid color…** +
+presets (both elements), **Logo color…** / **Ring color…** (one element),
+**Custom (segments)…** (a 2×5 swatch grid, one color per segment) and
+**Reset to factory**. This uses the per-segment color list now accepted by
+`build_lighting_reports` and an in-memory `_lighting_table`; the verified
+safe write recipe (arm -> lights off -> clear pass -> final table -> lights
+on) is unchanged.
