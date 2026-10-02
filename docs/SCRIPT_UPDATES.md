@@ -1,6 +1,28 @@
 # Script Updates
 
-## Latest updates (2026-09-17)
+## Latest updates (2026-10-02)
+
+### Tray Speed + Mode selectors, and a "lights turn off" bug fix
+
+- **Speed / Mode submenus** (tray, `--enable-controls`): the `Lighting` menu
+  now exposes the selectors decoded from `pcaps/06` as radio groups - **Speed**
+  (`0.5x`=`0x64`, `1x`=`0x4b`, `1.5x`=`0x32`; `2x`=`0x19` omitted as the strobe
+  value) and **Mode** (`Default`, `Breathing`=`0x00`, `Glitch`=`0x03`,
+  `Solid`=`0x01`, `Wave`=`0x02`). "Solid" greys out Speed (a static color has
+  no speed). Both write through the existing `build_lighting_reports` path, so
+  all clamps still apply.
+- **"Lights turn off" bug fixed**: the write used to turn the lights off
+  *first*, write the whole table (~0.5 s), then turn them back on - the final
+  "on" was the last report in the burst and could be dropped by the
+  dongle/2.4 GHz link, leaving the headset dark. The write is now reordered to
+  write the table while the lights are on and do the off->on flick back-to-back
+  at the very end; the "on" commit is verified via the `0x4a` read-back and
+  retried (up to 3x, with a settle delay).
+- **Protocol correction**: the `0x4c` byte is the SPEED/tempo (not a "mode
+  selector") and the `0x4d` M byte is the MODE - see `docs/RGB_SAFE_RANGES.md`
+  and `docs/HID_REPORTS.md`.
+
+## Earlier updates (2026-09-17)
 
 ### Granular RGB lighting from the tray (per-element + per-segment)
 The tray's `Lighting` submenu (behind `--enable-controls`) now exposes the

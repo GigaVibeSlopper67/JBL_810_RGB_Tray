@@ -65,13 +65,21 @@ LOW_BATTERY_LEVELS = (20, 10, 5)
 # headset ignores them. Arming persists for at least several minutes.
 LIGHT_ARM_GET_RIDS = (0x68, 0x67, 0x62, 0x5C, 0x75, 0x49,
                       0x51, 0x47, 0x4A, 0x45)
-FEAT_LIGHT_HEADER = 0x4C  # SET: [0x4c, element, tempo/effect, segments]
-FEAT_LIGHT_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, M, last]
+FEAT_LIGHT_HEADER = 0x4C  # SET: [0x4c, element, speed/tempo, segments]
+FEAT_LIGHT_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, mode, last]
 LIGHT_ELEMENTS = (0, 1)  # element 0 = logo, element 1 = ring (verified live)
 LIGHT_SEGMENTS = 5       # color segments per element (QuantumENGINE default)
 LIGHT_MAX_SEGMENTS = 5   # hard cap (>5 wedges the lighting MCU; QuantumENGINE sends 1..5)
 LIGHT_TEMPO = 0x64       # speed/tempo byte (0x28/0x32/0x3c/0x46/0x4b/0x50/0x64 observed)
 LIGHT_MODES = {0: 0x02, 1: 0x05}  # mode (M byte; Wave=0x02 Breathing=0x00 Glitch=0x03 Solid=0x01)
+# UI speed/mode selectors, decoded from pcaps/06 "Switch RGB Speeds and Modes".
+# Speed = the 0x4c tempo byte (smaller = faster); 2x (0x19) is the fast/strobe
+# value and is deliberately NOT offered here. Mode = the 0x4d M byte, applied
+# uniformly to both elements when a specific mode is chosen (the factory
+# default keeps the per-element 0x02/0x05).
+LIGHT_SPEEDS = (("0.5x", 0x64), ("1x", 0x4B), ("1.5x", 0x32))
+LIGHT_MODE_NAMES = (("Breathing", 0x00), ("Glitch", 0x03), ("Solid", 0x01), ("Wave", 0x02))
+LIGHT_MODE_SOLID = 0x01  # Solid is a static color - speed has no visible effect
 # Value ranges observed in the QuantumENGINE USB captures (pcaps/), including
 # the newer "Switch between RGB Modes" and "Switch RGB Speeds and Modes"
 # captures. The only value that wedges the lighting MCU into a strobe lockup
@@ -1434,6 +1442,10 @@ class BatteryTrayApp:
         # LIGHT_SEGMENTS colors). There is no read-back for the table, so it
         # is session-only; initialized to the QuantumENGINE factory table.
         self._lighting_table = self._factory_lighting_table()
+        # Selected lighting speed (0x4c tempo byte) and mode (0x4d M byte).
+        # mode None = factory per-element default (logo 0x02 / ring 0x05).
+        self._lighting_tempo = LIGHT_TEMPO
+        self._lighting_mode: Optional[int] = None
 
         # Desktop notifications (low battery, dongle connect/disconnect;
         # mute changes only with --notify-mute) + battery history/estimate.
@@ -1626,6 +1638,47 @@ class BatteryTrayApp:
             segments_item = self.Gtk.MenuItem(label="Custom (segments)…")
             segments_item.connect("activate", lambda *_: self._edit_lighting_segments())
             lighting_menu.append(segments_item)
+            lighting_menu.append(self.Gtk.SeparatorMenuItem())
+            # Speed (0x4c tempo byte) - radio group; 2x (0x19) is omitted.
+            speed_menu = self.Gtk.Menu()
+            self._lighting_speed_items = {}
+            speed_group = None
+            for name, value in LIGHT_SPEEDS:
+                it = self.Gtk.RadioMenuItem(label=f"Speed: {name}")
+                if speed_group is not None:
+                    it.join_group(speed_group)
+                else:
+                    speed_group = it
+                it.connect("activate", lambda _w, v=value: self._on_lighting_speed_radio(v))
+                speed_menu.append(it)
+                self._lighting_speed_items[value] = it
+            speed_item = self.Gtk.MenuItem(label="Speed")
+            speed_item.set_submenu(speed_menu)
+            lighting_menu.append(speed_item)
+            self._speed_menu_item = speed_item
+            # Mode (0x4d M byte) - radio group; "Default" = factory per-element.
+            mode_menu = self.Gtk.Menu()
+            self._lighting_mode_items = {}
+            mode_group = None
+            for name, value in (("Default", None),) + LIGHT_MODE_NAMES:
+                it = self.Gtk.RadioMenuItem(label=f"Mode: {name}")
+                if mode_group is not None:
+                    it.join_group(mode_group)
+                else:
+                    mode_group = it
+                it.connect("activate", lambda _w, v=value: self._on_lighting_mode_radio(v))
+                mode_menu.append(it)
+                self._lighting_mode_items[value] = it
+            mode_item = self.Gtk.MenuItem(label="Mode")
+            mode_item.set_submenu(mode_menu)
+            lighting_menu.append(mode_item)
+            # Mark the current speed/mode (defaults: 0.5x / factory).
+            self._lighting_radios_syncing = True
+            try:
+                self._lighting_speed_items[LIGHT_TEMPO].set_active(True)
+                self._lighting_mode_items[None].set_active(True)
+            finally:
+                self._lighting_radios_syncing = False
             reset_item = self.Gtk.MenuItem(label="Reset to factory")
             reset_item.connect("activate", lambda *_: self._set_lighting(self._factory_lighting_table()))
             lighting_menu.append(reset_item)
@@ -1719,6 +1772,18 @@ class BatteryTrayApp:
         finally:
             self._sidetone_radios_syncing = False
 
+    def _on_lighting_speed_radio(self, value: int) -> None:
+        """Menu handler; ignores the programmatic radio sync."""
+        if getattr(self, "_lighting_radios_syncing", False):
+            return
+        self._set_lighting_speed(value)
+
+    def _on_lighting_mode_radio(self, value: Optional[int]) -> None:
+        """Menu handler; ignores the programmatic radio sync."""
+        if getattr(self, "_lighting_radios_syncing", False):
+            return
+        self._set_lighting_mode(value)
+
     def _factory_lighting_table(self) -> dict:
         """Build a fresh factory-default lighting table (logo + ring)."""
         return {
@@ -1738,6 +1803,28 @@ class BatteryTrayApp:
         for el in elements:
             table[el] = [tuple(rgb)] * LIGHT_SEGMENTS
         self._set_lighting(table)
+
+    def _set_lighting_speed(self, value: int) -> None:
+        """Set the lighting speed (0x4c tempo byte) and re-apply the table."""
+        self._lighting_tempo = _clamp_light_tempo(value)
+        self._set_lighting(self._lighting_table)
+
+    def _set_lighting_mode(self, value: Optional[int]) -> None:
+        """Set the lighting mode (0x4d M byte) and re-apply the table.
+
+        None restores the factory per-element default (logo 0x02 / ring 0x05);
+        a specific value is applied uniformly to both elements (matching
+        QuantumENGINE, which sends the same M byte to logo and ring).
+        """
+        self._lighting_mode = None if value is None else _clamp_light_mode(value)
+        self._update_lighting_speed_sensitive()
+        self._set_lighting(self._lighting_table)
+
+    def _update_lighting_speed_sensitive(self) -> None:
+        """Grey out the Speed menu when Solid is selected (speed is a no-op)."""
+        item = getattr(self, "_speed_menu_item", None)
+        if item is not None:
+            item.set_sensitive(self._lighting_mode != LIGHT_MODE_SOLID)
 
     def _set_lighting(self, table: dict) -> None:
         """Write a per-element lighting table (logo + ring; each a list of
@@ -1799,6 +1886,8 @@ class BatteryTrayApp:
         delay = self.lighting_delay
         reset_segments = self.lighting_reset_segments
         reader = self.hidraw_reader
+        tempo = self._lighting_tempo
+        mode = self._lighting_mode
         if self._lighting_abort:
             # A lights toggle raced this write: the toggle wins - do not
             # rewrite the table (and never commit its lights-on).
@@ -1807,8 +1896,10 @@ class BatteryTrayApp:
             return
         if not reader.arm_lighting():
             _log("Lighting: arming GET round failed; the headset may ignore the table")
-        # Apply cycle: the table takes effect on the lights off->on transition.
-        reader.send_feature_bytes(bytes([0x4B, 0x00]), delay=delay)
+        # Write the table while the lights are on (the dongle buffers it; the
+        # table only takes effect on the lights off->on transition). The
+        # off->on flick happens at the very end so the headset is dark for as
+        # little time as possible.
         ok = True
         # Clearing pass: overwrite every slot (stale colors from earlier
         # changes or the factory table otherwise keep cycling). Each element
@@ -1816,6 +1907,7 @@ class BatteryTrayApp:
         for element in LIGHT_ELEMENTS:
             colors = table.get(element) or [(0, 0, 0)]
             for rep in build_lighting_reports(colors[0], element,
+                                              tempo=tempo, mode=mode,
                                               segments=reset_segments):
                 if not reader.send_feature_bytes(rep, delay=delay):
                     ok = False
@@ -1828,21 +1920,46 @@ class BatteryTrayApp:
         if ok and not self._lighting_abort:
             for element in LIGHT_ELEMENTS:
                 colors = table.get(element) or [(0, 0, 0)]
-                for rep in build_lighting_reports(colors, element):
+                for rep in build_lighting_reports(colors, element,
+                                                  tempo=tempo, mode=mode):
                     if not reader.send_feature_bytes(rep, delay=delay):
                         ok = False
                         break
                 if not ok:
                     break
-        if not self._lighting_abort and ok:
-            reader.send_feature_bytes(bytes([0x4B, 0x01]), delay=delay)
-            self._lights_on = True
-            _log("Lighting table applied (clear %d + final segments per element, applied via lights off->on)" % reset_segments)
-        elif not self._lighting_abort:
-            _log("Lighting: failed to write the table")
+        if not self._lighting_abort:
+            # Commit: lights off -> on (the table applies on this transition).
+            # The off->on is back-to-back at the very end so the headset is dark
+            # for as little time as possible; the "on" is verified + retried.
+            reader.send_feature_bytes(bytes([0x4B, 0x00]), delay=delay)
+            self._lights_on = self._commit_lights_on(reader, delay)
+            if ok:
+                _log("Lighting table applied (clear %d + final segments per element, applied via lights off->on)" % reset_segments)
+            else:
+                _log("Lighting: some table frames failed, but the lights were restored")
         else:
             _log("Lighting: write aborted (lights toggled meanwhile)")
         self.GLib.idle_add(self._render)
+
+    def _commit_lights_on(self, reader, delay: float, retries: int = 3) -> bool:
+        """Turn the lights on and verify via the 0x4a read-back; retry if not.
+
+        The lights-on commit is the last report in the lighting write burst and
+        the one most likely to be dropped by the dongle/2.4 GHz link. A short
+        settle delay is added before the read-back so the dongle has time to
+        relay the command; a color/speed/mode change must not leave the headset
+        dark.
+        """
+        for attempt in range(retries):
+            reader.send_feature_bytes(bytes([0x4B, 0x01]), delay=delay)
+            time.sleep(delay * 3)
+            state = reader.read_feature(0x4A, 2)
+            echoed = state[1] if state and len(state) > 1 else None
+            if echoed == 1:
+                return True
+            _log(f"Lighting: lights-on commit not confirmed "
+                 f"(attempt {attempt + 1}/{retries}, read-back 0x4a={echoed})")
+        return False
 
     def _pick_lighting_color(self, element: Optional[int] = None) -> None:
         """Open a color chooser and apply the picked color.

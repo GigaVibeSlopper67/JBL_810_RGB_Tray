@@ -22,12 +22,12 @@ plays a sequence of color **segments**. It is pushed over HID feature reports:
 
 | Report | Payload | Field | Meaning |
 |--------|---------|-------|---------|
-| `0x4c` | `[4c, element, effect, segments]` | element | `0` logo / `1` ring |
-| | | effect | effect/mode selector (was "tempo") |
+| `0x4c` | `[4c, element, speed, segments]` | element | `0` logo / `1` ring |
+| | | speed | tempo/speed selector (`0x19` = 2x is excluded) |
 | | | segments | number of `0x4d` frames that follow |
-| `0x4d` | `[4d, element, index, R, G, B, M, last]` | index | 0-based frame number |
+| `0x4d` | `[4d, element, index, R, G, B, mode, last]` | index | 0-based frame number |
 | | | R,G,B | color (bytes 3-5) |
-| | | M | interval/duration marker |
+| | | mode | mode selector (Wave/Glitch/Solid/Breathing) |
 | | | last | per-segment parameter (NOT `index*2`) |
 | `0x4b` | `[4b, 0/1]` | — | lights off/on (the commit) |
 

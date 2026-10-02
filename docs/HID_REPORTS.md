@@ -94,21 +94,21 @@ Decoded from the #357 captures and verified live on a Quantum 810
 ## Lighting (RGB) - decoded and verified live
 
 QuantumENGINE's lighting model: per lighting **element** (0 = logo,
-1 = ring on the earcups) an effect (Breathing/Solid/Wave/Glitch) plays a
-sequence of color **segments** whose interval distribution follows a
-**tempo** slider. The software pushes it over HID feature reports:
+1 = ring on the earcups) a mode (Breathing/Solid/Wave/Glitch) plays a
+sequence of color **segments** at a **speed** set by the tempo slider. The
+software pushes it over HID feature reports:
 
 | Report | Payload | Meaning |
 |--------|---------|---------|
-| `0x4c` | `[4c, element, effect, segments]` | table header; **effect** byte ∈ {`0x28`,`0x32`,`0x3c`,`0x46`,`0x4b`,`0x50`,`0x64`}; segments ∈ 1..5 (never more than 5) |
-| `0x4d` | `[4d, element, index, R, G, B, M, last]` | one color segment; **RGB = bytes 3-5** (verified: `ff0000` renders red, `00ff00` green, `0000ff` blue); `M` = interval/duration marker ∈ {`00`..`06`}; `index` ∈ 0..4; `last` = per-segment parameter (0..8), **not** `index*2` |
+| `0x4c` | `[4c, element, speed, segments]` | table header; **speed** byte ∈ {`0x28`,`0x32`,`0x3c`,`0x46`,`0x4b`,`0x50`,`0x64`} (excl. `0x19`=2x); segments ∈ 1..5 (never more than 5) |
+| `0x4d` | `[4d, element, index, R, G, B, mode, last]` | one color segment; **RGB = bytes 3-5** (verified: `ff0000` renders red, `00ff00` green, `0000ff` blue); `mode` = mode selector (Wave=`0x02` Breathing=`0x00` Glitch=`0x03` Solid=`0x01`, all ∈ {`00`..`06`}); `index` ∈ 0..4; `last` = per-segment parameter (0..8), **not** `index*2` |
 | `0x4b` | `[4b, 0/1]` | lights off/on (commit; already known) |
 
 > **Safe value ranges** (from the QuantumENGINE USB captures in `pcaps/`,
 > including the newest "Switch between RGB Modes" firmware capture): segment
-> count **1..5 (never above 5)**, effect byte **`0x28`/`0x32`/`0x3c`/`0x46`/
-> `0x4b`/`0x50`/`0x64`**, frame index **0..4**, last byte **0..8** (a
-> per-segment parameter, *not* `index*2`), and the `M` byte
+> count **1..5 (never above 5)**, speed byte **`0x28`/`0x32`/`0x3c`/`0x46`/
+> `0x4b`/`0x50`/`0x64`** (excl. `0x19` = 2x), frame index **0..4**, last byte
+> **0..8** (a per-segment parameter, *not* `index*2`), and the mode (M) byte
 > **`0x00`..`0x06`**. Segment counts above 5 (the old 16/32-segment "reset")
 > wedge the lighting MCU into a strobe lockup - that is the only dangerous
 > field. The tray and `tools/jbl_rgb.py` hard-clamp every value to these
@@ -195,9 +195,14 @@ Open questions (not yet decoded):
 
 ### Controlling the lighting from Linux
 
-Both implementations arm automatically (the GET round above), then write
-the per-element table and toggle the lights to trigger the off->on apply
-cycle. Three guards fix the color mixups (diagnosed live, 2026-09-17):
+Both implementations arm automatically (the GET round above), then write the
+per-element table **while the lights are on** (the dongle buffers it) and commit
+with a lights **off->on** flick back-to-back at the very end (the table applies
+on that transition; keeping the flick at the end minimizes the time the headset
+is dark). The lights-on commit is verified via the `0x4a` read-back and retried
+a few times - it is the last report in the burst and the one most likely to be
+dropped by the dongle/2.4 GHz link. Three guards fix the color mixups
+(diagnosed live, 2026-09-17):
 every SET_REPORT is paced (~10 ms - back-to-back writes were dropped, the
 ring's writes went missing entirely); a clearing pass overwrites the whole
 table (identical segments per element - stale colors from earlier writes
@@ -208,10 +213,12 @@ a worker
 thread so the UI never blocks; it skips re-arming while fresh
 (`LIGHT_ARM_TTL`, 60 s) and coalesces rapid color clicks (newest color wins):
 
-- **Tray** (`--enable-controls`): menu -> Lighting -> "Pick color…" (GTK
-  color chooser) or the presets Red/Green/Blue/White/Teal (factory).
-  Applies one color to both elements (logo + ring) as a paced two-pass
-  write (`LIGHT_RESET_SEGMENTS` + `LIGHT_SEGMENTS`, `LIGHT_SET_DELAY`).
+- **Tray** (`--enable-controls`): menu -> Lighting -> "Solid color…" / color
+  presets / "Logo color…" / "Ring color…" / "Custom (segments)…", plus
+  **Speed** and **Mode** radio submenus (the decoded `0x4c` tempo / `0x4d`
+  mode selectors; "Solid" greys out Speed) and "Reset to factory". Applies
+  as a paced two-pass write (`LIGHT_RESET_SEGMENTS` + `LIGHT_SEGMENTS`,
+  `LIGHT_SET_DELAY`).
 - **CLI** `tools/jbl_rgb.py`:
   - `--status` - read-only probe (state + `0x4c`/`0x4d`/`0x4e` GET attempts)
   - `--solid RRGGBB [--element logo|ring|both]` - clearing pass plus one

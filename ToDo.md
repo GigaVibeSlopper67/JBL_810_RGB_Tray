@@ -145,3 +145,26 @@ kept OUT of `SAFE_TEMPOS`/`LIGHT_SAFE_TEMPOS` (the clamp pins it to `0x28`).
 Comments/docstrings in `tools/jbl_rgb.py` and `jbl_quantum_810_910_tray.py`
 now say "speed byte"/"mode byte" instead of "tempo/effect"/"M"; the same
 correction is in `docs/RGB_SAFE_RANGES.md` and `docs/HID_REPORTS.md`.
+
+---
+
+Round 9 (2026-10-02, tray Mode/Speed selectors): the tray's `Lighting` submenu
+(behind `--enable-controls`) now exposes the decoded **Speed** and **Mode**
+selectors as radio groups. **Speed** offers `0.5x`=`0x64`, `1x`=`0x4b`,
+`1.5x`=`0x32` (the `2x`=`0x19` strobe value is deliberately omitted). **Mode**
+offers `Default` (factory per-element 0x02/0x05) plus `Breathing`=0x00,
+`Glitch`=0x03, `Solid`=0x01 and `Wave`=0x02 (a non-default mode is applied
+uniformly to logo + ring, matching QuantumENGINE). Both write through the
+existing `build_lighting_reports` path (now passed `tempo`/`mode`), so all
+existing clamps still apply.
+
+---
+
+Round 10 (2026-10-02, "lights turn off after a mode/color change" bug): the
+lighting write turned the lights off *first*, wrote the whole table, then
+turned them back on - the final "on" (the last report in the burst) could be
+dropped by the dongle/2.4 GHz link, leaving the headset dark. `_apply_lighting`
+now writes the table while the lights are on (buffered) and does the off->on
+flick back-to-back at the very end; `_commit_lights_on` verifies via the `0x4a`
+read-back and retries (up to 3x, with a settle delay). "Solid" also greys out
+the Speed submenu (a static color has no speed).

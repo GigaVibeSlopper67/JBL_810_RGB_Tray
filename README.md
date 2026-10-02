@@ -176,15 +176,19 @@ The tray's lighting write is tunable via `--lighting-delay` /
 Verified behavior:
 
 - A solid color is written as **5 identical segments per element** and renders
-  as a **breathing-style pulse** (the steady "Solid" effect encoding is still
-  unknown). Each element (logo / ring) can be colored independently, and each
-  of the 5 segments can take its own color (the factory table itself uses a
-  magenta accent on one segment).
+  as a **breathing-style pulse**. Each element (logo / ring) can be colored
+  independently, and each of the 5 segments can take its own color (the
+  factory table itself uses a magenta accent on one segment). The **mode**
+  (Breathing/Glitch/Solid/Wave) and **speed** (0.5x/1x/1.5x/2x) are separate
+  selectors - see "Lighting" below.
 - Lighting SETs are ignored unless the dongle is **armed** first (the
   QuantumENGINE connect-time GET round - both the tray and the CLI do this
   automatically). The armed state persists for several minutes.
 - The table applies on the **lights off -> on transition**; the tray and CLI
-  switch the lights off, write the table and switch them back on.
+  write the table while the lights are on (buffered), then flick the lights
+  off->on back-to-back at the end so the headset is dark for as little time as
+  possible. The lights-on commit is verified and retried (the dongle/2.4 GHz
+  link can drop the last report in a burst).
 - There is **no read-back** for the color table; colors persist until
   overwritten. `--default` replays the factory teal table (`33 ff cc`),
   QuantumENGINE on Windows can always restore them.
@@ -192,8 +196,9 @@ Verified behavior:
 In the tray (with `--enable-controls`): menu -> **Lighting** -> **Solid color…**
 (both elements), the presets **Red / Green / Blue / White / Teal (factory)**,
 **Logo color…** / **Ring color…** (set one element independently),
-**Custom (segments)…** (a 2×5 grid of color swatches - logo/ring × 5 segments)
-or **Reset to factory**.
+**Custom (segments)…** (a 2×5 grid of color swatches - logo/ring × 5 segments),
+**Speed** (0.5x/1x/1.5x - the 2x strobe value is omitted), **Mode**
+(Breathing/Glitch/Solid/Wave - "Solid" greys out Speed) or **Reset to factory**.
 
 CLI (`tools/jbl_rgb.py`):
 
@@ -215,8 +220,9 @@ for different colors), `--segments-colors C1,C2,...` (per-segment colors,
 1–5 entries, applied to `--element`), `--reset-segments N` (clearing pass
 before the final table, default 5; 0 disables - wipes stale colors of earlier
 writes), `--segments N` (final table segments per element, default 5 =
-QuantumENGINE-exact), `--speed` (0x4c tempo byte, default `0x64`), `--mode`
-(0x4d interval marker, default `0x02` logo / `0x05` ring), `--delay SEC`
+QuantumENGINE-exact), `--speed` (0x4c tempo/speed byte, default `0x64`),
+`--mode` (0x4d mode byte: Wave=0x02 Breathing=0x00 Glitch=0x03 Solid=0x01,
+default `0x02` logo / `0x05` ring), `--delay SEC`
 (pause between SETs, default 0.02 s - dropped-write guard), `--lights
 on|off|keep` (state after the write, default `keep`) and `--listen SEC`
 (seconds to listen for `0x07` ACK events after a write).
@@ -229,7 +235,7 @@ on|off|keep` (state after the write, default `keep`) and `--listen SEC`
 > | Field | Safe range |
 > |-------|------------|
 > | `0x4c` segment count | **1–5** (never more than 5) |
-> | `0x4c` effect byte | **`0x28`/`0x32`/`0x3c`/`0x46`/`0x4b`/`0x50`/`0x64`** |
+> | `0x4c` speed byte | **`0x28`/`0x32`/`0x3c`/`0x46`/`0x4b`/`0x50`/`0x64`** (`0x19` = 2x excluded) |
 > | `0x4d` frame index | **0–4** |
 > | `0x4d` last byte | **0–8** (per-segment parameter, not `index*2`) |
 > | `0x4d` M byte | **`0x00`–`0x06`** |
