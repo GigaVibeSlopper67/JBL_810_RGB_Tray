@@ -4,18 +4,19 @@ JBL Quantum 810 - RGB lighting CLI/experiment (Linux, hidraw).
 
 Decoded from the HeadsetControl #357 USB captures and verified live on a
 Quantum 810 (see docs/HID_REPORTS.md). QuantumENGINE's lighting model:
-per lighting ELEMENT (0 = logo, 1 = ring on the earcups) an effect
-(Breathing/Solid/Wave/Glitch) plays a sequence of color SEGMENTS whose
-interval distribution follows a TEMPO slider. Over HID:
+per lighting ELEMENT (0 = logo, 1 = ring on the earcups) a MODE
+(Breathing/Solid/Wave/Glitch) plays a sequence of color SEGMENTS at a SPEED
+set by the tempo slider. Over HID:
 
     GET round  "arming": the QuantumENGINE connect-time GETs
                (0x68, 0x67, 0x62, 0x5c, 0x75, 0x49, 0x51, 0x47,
                0x4a, 0x45) - REQUIRED before lighting SETs take effect
                (otherwise the dongle caches them, the headset ignores
                them). Arming persists for at least several minutes.
-    SET 0x4c   [zone, effect, segments]           table header
-    SET 0x4d   [zone, index, R, G, B, M, last]  one color segment; M is
-               the interval/duration marker, `last` a per-segment parameter
+    SET 0x4c   [zone, tempo, segments]            table header; tempo = SPEED
+    SET 0x4d   [zone, index, R, G, B, mode, last] one color segment; mode is
+               the effect selector (Wave/Glitch/Solid/Breathing), `last` a
+               per-segment parameter
     SET 0x4b   [0|1]                             lights off/on (commit)
 
 The table applies on the lights OFF->ON transition; writes while the
@@ -67,21 +68,25 @@ from jbl_status import (  # noqa: E402
 
 # --- Report IDs ------------------------------------------------------------------
 
-FEAT_TABLE_HEADER = 0x4C  # SET: [0x4c, element, tempo/effect, segment_count]
-FEAT_TABLE_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, M, last]
+FEAT_TABLE_HEADER = 0x4C  # SET: [0x4c, element, speed/tempo, segment_count]
+FEAT_TABLE_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, mode, last]
 FEAT_SET_LIGHTS = 0x4B    # SET: [0x4b, 0=off/1=on] (known)
 FRAME_COUNT = 5           # QuantumENGINE default segments per element
 MAX_SEGMENTS = 5          # hard cap (>5 wedges the lighting MCU; QuantumENGINE sends 1..5)
 RESET_SEGMENTS = 5        # clearing-pass slots per element (safe: == MAX_SEGMENTS)
 # Value ranges observed in the QuantumENGINE USB captures (pcaps/), including
-# the newer "Switch between RGB Modes" capture. The only value that wedges the
-# lighting MCU into a strobe lockup is a segment count ABOVE 5 (the old
-# 16/32-segment "reset" is what broke it); every count <= 5 is safe. The 0x4c
-# tempo/effect byte and the 0x4d M byte each take a small set of observed
-# values - all emitted by QuantumENGINE itself, so all safe to reproduce. The
-# 0x4d last byte is a per-segment parameter (0..8 observed), NOT `index*2`:
-# `index*2` is only the default for the plain "breathing" shape. Segment count
-# is hard-clamped separately (MAX_SEGMENTS).
+# the newer "Switch between RGB Modes" and "Switch RGB Speeds and Modes"
+# captures. The only value that wedges the lighting MCU into a strobe lockup
+# is a segment count ABOVE 5 (the old 16/32-segment "reset" is what broke it);
+# every count <= 5 is safe. The 0x4c tempo byte is the SPEED (newest capture:
+# 1x=0x4b, 1.5x=0x32, 2x=0x19) and the 0x4d M byte is the MODE (Wave=0x02,
+# Breathing=0x00, Glitch=0x03, Solid=0x01). The 0x4d last byte is a
+# per-segment parameter (0..8 observed), NOT `index*2`: `index*2` is only the
+# default for the plain "breathing" shape. Segment count is hard-clamped
+# separately (MAX_SEGMENTS).
+# NOTE: 0x19 (the 2x speed) is deliberately NOT in SAFE_TEMPOS below - it is
+# the fastest speed QuantumENGINE emits and reads as a strobe on a wedged MCU,
+# so the clamp pins it to 0x28 (nearest safe tempo) instead of sending it.
 SAFE_TEMPOS = (0x28, 0x32, 0x3C, 0x46, 0x4B, 0x50, 0x64)
 SAFE_MODES = (0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06)
 # Pause after each lighting SET_REPORT (pacing, live-verified need): the
@@ -121,13 +126,18 @@ def _clamp_segments(n: int) -> int:
 
 
 def _clamp_tempo(tempo: int) -> int:
-    """Clamp the 0x4c tempo byte to the values QuantumENGINE actually sends."""
+    """Clamp the 0x4c tempo/speed byte to the safe values QuantumENGINE sends.
+
+    The newest capture adds 0x19 (the 2x / fastest speed) which is intentionally
+    left out of SAFE_TEMPOS: it reads as a strobe on a wedged lighting MCU, so
+    it is pinned to the nearest safe tempo (0x28) instead of being sent.
+    """
     tempo = int(tempo)
     return tempo if tempo in SAFE_TEMPOS else min(SAFE_TEMPOS, key=lambda v: abs(v - tempo))
 
 
 def _clamp_mode(mode: int) -> int:
-    """Clamp the 0x4d M byte to the values QuantumENGINE actually sends."""
+    """Clamp the 0x4d mode (M) byte to the safe values QuantumENGINE sends."""
     mode = int(mode)
     return mode if mode in SAFE_MODES else min(SAFE_MODES, key=lambda v: abs(v - mode))
 
@@ -326,12 +336,13 @@ def main() -> int:
                     help="semicolon-separated hex feature reports, "
                          "e.g. '4c 00 64 05;4d 00 00 ff 00 00 02 00' - CHANGES DEVICE STATE")
     ap.add_argument("--speed", type=lambda s: _clamp_tempo(int(s, 0)), default=None,
-                    help="effect byte for the 0x4c header (default 0x64; safe set: "
-                         "0x28/0x32/0x3c/0x46/0x4b/0x50/0x64 - others clamped to nearest)")
+                    help="speed/tempo byte for the 0x4c header (default 0x64; safe set: "
+                         "0x28/0x32/0x3c/0x46/0x4b/0x50/0x64; 0x19 = 2x is excluded "
+                         "on purpose - others clamped to nearest)")
     ap.add_argument("--mode", type=lambda s: _clamp_mode(int(s, 0)), default=None,
-                    help="M byte for the 0x4d frames (default: 0x02 zone 0 / 0x05 "
-                         "zone 1; safe set 0x00..0x06 - other values "
-                         "are clamped to the nearest)")
+                    help="mode (M) byte for the 0x4d frames (default: 0x02 zone 0 / "
+                         "0x05 zone 1; Wave=0x02 Breathing=0x00 Glitch=0x03 "
+                         "Solid=0x01; safe set 0x00..0x06 - others clamped to nearest)")
     ap.add_argument("--segments", type=lambda s: _clamp_segments(int(s, 0)),
                     default=FRAME_COUNT, metavar="N",
                     help=f"final 0x4d table segments per element (default "

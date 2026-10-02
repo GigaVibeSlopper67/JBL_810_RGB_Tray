@@ -132,3 +132,16 @@ presets (both elements), **Logo color…** / **Ring color…** (one element),
 `build_lighting_reports` and an in-memory `_lighting_table`; the verified
 safe write recipe (arm -> lights off -> clear pass -> final table -> lights
 on) is unchanged.
+
+---
+
+Round 8 (2026-10-02, `pcaps/06 ... Switch RGB Speeds and Modes.pcapng`): the
+"modes" vs "presets" confusion is resolved. The `0x4c` tempo byte is the
+**SPEED** (`1x`=`0x4b`, `1.5x`=`0x32`, `2x`=`0x19`; `0.5x` start value not
+re-sent) and the `0x4d` M byte is the **MODE** (`Wave`=`0x02`,
+`Breathing`=`0x00`, `Glitch`=`0x03`, `Solid`=`0x01`). `0x19` (2x) is the
+fastest speed and reads as a strobe on a wedged MCU, so it is deliberately
+kept OUT of `SAFE_TEMPOS`/`LIGHT_SAFE_TEMPOS` (the clamp pins it to `0x28`).
+Comments/docstrings in `tools/jbl_rgb.py` and `jbl_quantum_810_910_tray.py`
+now say "speed byte"/"mode byte" instead of "tempo/effect"/"M"; the same
+correction is in `docs/RGB_SAFE_RANGES.md` and `docs/HID_REPORTS.md`.

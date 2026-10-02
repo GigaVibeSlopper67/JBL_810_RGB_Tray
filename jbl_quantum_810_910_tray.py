@@ -70,17 +70,21 @@ FEAT_LIGHT_FRAME = 0x4D  # SET: [0x4d, element, index, R, G, B, M, last]
 LIGHT_ELEMENTS = (0, 1)  # element 0 = logo, element 1 = ring (verified live)
 LIGHT_SEGMENTS = 5       # color segments per element (QuantumENGINE default)
 LIGHT_MAX_SEGMENTS = 5   # hard cap (>5 wedges the lighting MCU; QuantumENGINE sends 1..5)
-LIGHT_TEMPO = 0x64       # tempo/effect byte (0x28/0x32/0x3c/0x46/0x4b/0x50/0x64 observed)
-LIGHT_MODES = {0: 0x02, 1: 0x05}  # per-segment interval marker (M byte)
+LIGHT_TEMPO = 0x64       # speed/tempo byte (0x28/0x32/0x3c/0x46/0x4b/0x50/0x64 observed)
+LIGHT_MODES = {0: 0x02, 1: 0x05}  # mode (M byte; Wave=0x02 Breathing=0x00 Glitch=0x03 Solid=0x01)
 # Value ranges observed in the QuantumENGINE USB captures (pcaps/), including
-# the newer "Switch between RGB Modes" capture. The only value that wedges the
-# lighting MCU into a strobe lockup is a segment count ABOVE 5 (the old
-# 16-segment "reset" is what broke it); every count <= 5 is safe. The 0x4c
-# tempo/effect byte and the 0x4d M byte each take a small set of observed
-# values, all emitted by QuantumENGINE itself. The 0x4d last byte is a
+# the newer "Switch between RGB Modes" and "Switch RGB Speeds and Modes"
+# captures. The only value that wedges the lighting MCU into a strobe lockup
+# is a segment count ABOVE 5 (the old 16-segment "reset" is what broke it);
+# every count <= 5 is safe. The 0x4c tempo byte is the SPEED (newest capture:
+# 1x=0x4b, 1.5x=0x32, 2x=0x19) and the 0x4d M byte is the MODE (Wave=0x02,
+# Breathing=0x00, Glitch=0x03, Solid=0x01). The 0x4d last byte is a
 # per-segment parameter (0..8 observed), NOT `index*2`: `index*2` is only the
 # default for the plain "breathing" shape. Segment count is hard-clamped
 # separately (LIGHT_MAX_SEGMENTS).
+# NOTE: 0x19 (the 2x speed) is deliberately NOT in LIGHT_SAFE_TEMPOS - it is
+# the fastest speed QuantumENGINE emits and reads as a strobe on a wedged MCU,
+# so the clamp pins it to 0x28 (nearest safe tempo) instead of sending it.
 LIGHT_SAFE_TEMPOS = (0x28, 0x32, 0x3C, 0x46, 0x4B, 0x50, 0x64)
 LIGHT_SAFE_MODES = (0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06)
 # Factory lighting table (QuantumENGINE pushes this on connect; mirrors
@@ -294,11 +298,11 @@ def build_lighting_reports(colors, element: int = 0, tempo: int = LIGHT_TEMPO,
     `segments` 0x4d frames. The sequence only takes effect after the
     LIGHT_ARM_GET_RIDS GET round and a lights off->on transition.
 
-    Segment count, effect byte and M byte are hard-clamped to the ranges
-    observed in the QuantumENGINE captures (pcaps/): 1..5 segments, effect
-    0x28/0x32/0x3c/0x46/0x4b/0x50/0x64, M 0x00..0x06. Counts above 5 wedge
-    the lighting MCU (the old 16-segment "reset" locked the RGB into a
-    strobe).
+    Segment count, speed/tempo byte and mode (M) byte are hard-clamped to the
+    ranges observed in the QuantumENGINE captures (pcaps/): 1..5 segments,
+    speed 0x28/0x32/0x3c/0x46/0x4b/0x50/0x64 (0x19 = 2x is excluded), mode
+    M 0x00..0x06. Counts above 5 wedge the lighting MCU (the old 16-segment
+    "reset" locked the RGB into a strobe).
     """
     # Normalize: a bare 3-element integer sequence is a single color;
     # otherwise treat `colors` as a per-segment color sequence.
@@ -327,13 +331,18 @@ def build_lighting_reports(colors, element: int = 0, tempo: int = LIGHT_TEMPO,
 
 
 def _clamp_light_tempo(tempo: int) -> int:
-    """Clamp the 0x4c tempo byte to the values QuantumENGINE actually sends."""
+    """Clamp the 0x4c tempo/speed byte to the safe values QuantumENGINE sends.
+
+    0x19 (the 2x / fastest speed) is intentionally left out of
+    LIGHT_SAFE_TEMPOS: it reads as a strobe on a wedged lighting MCU, so it is
+    pinned to the nearest safe tempo (0x28) instead of being sent.
+    """
     tempo = int(tempo)
     return tempo if tempo in LIGHT_SAFE_TEMPOS else min(LIGHT_SAFE_TEMPOS, key=lambda v: abs(v - tempo))
 
 
 def _clamp_light_mode(mode: int) -> int:
-    """Clamp the 0x4d M byte to the values QuantumENGINE actually sends."""
+    """Clamp the 0x4d mode (M) byte to the safe values QuantumENGINE sends."""
     mode = int(mode)
     return mode if mode in LIGHT_SAFE_MODES else min(LIGHT_SAFE_MODES, key=lambda v: abs(v - mode))
 

@@ -4,9 +4,9 @@
 
 ### RGB Features
 
-#### "modes"
+#### Presets
 
-There are several RGB Modes with cool Names:
+There are several RGB Presets with cool Names, I previously mistook these for modes:
 
 - Spectrum
 - Sound is Survival
@@ -14,10 +14,34 @@ There are several RGB Modes with cool Names:
 - Dystopia
 - Arena
 
+#### Modes
+These modes affect how the RGB is moving.
+The actual modes seem to be the following:
+- Breathing 
+- Glitch 
+- Solid 
+- Wave
+
+#### Speeds
+Quantum Engine only has these speed settings for the LED Moving Speed:
+- 0.5x
+- 1.0x
+- 1.5x
+- 2.0x 
+
 #### Light Synch
 
 This means that the Logo and the Ring have the same color when it is on.
 It is a separate on/off switch.
+
+#### Byte mapping (from the USB captures)
+
+- **Mode** = the `0x4d` frame M byte: `Wave` = `0x02`, `Breathing` = `0x00`,
+  `Glitch` = `0x03`, `Solid` = `0x01`.
+- **Speed** = the `0x4c` header tempo byte: `1x` = `0x4b`, `1.5x` = `0x32`,
+  `2x` = `0x19` (`0.5x` was the start value and was not re-sent). `0x19` (2x)
+  is the fastest and is deliberately excluded from the tool's safe set (see
+  `docs/RGB_SAFE_RANGES.md`).
 
 ### Audio Features
 

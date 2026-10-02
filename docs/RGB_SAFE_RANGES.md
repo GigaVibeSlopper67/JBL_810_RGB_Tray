@@ -52,11 +52,11 @@ Treat every value outside these as untested and potentially device-bricking.
 | Field | Safe range |
 |-------|------------|
 | `0x4c` segment count | **1–5** (never more than 5) |
-| `0x4c` effect byte | **`0x28` `0x32` `0x3c` `0x46` `0x4b` `0x50` `0x64`** |
+| `0x4c` speed byte | **`0x28` `0x32` `0x3c` `0x46` `0x4b` `0x50` `0x64`** (excl. `0x19` = 2x) |
 | `0x4d` element | **0 or 1** |
 | `0x4d` frame index | **0–4** |
 | `0x4d` R / G / B | **0x00–0xFF** (any byte is fine) |
-| `0x4d` M byte | **`0x00` `0x01` `0x02` `0x03` `0x04` `0x05` `0x06`** |
+| `0x4d` mode byte (M) | **`0x00` `0x01` `0x02` `0x03` `0x04` `0x05` `0x06`** |
 | `0x4d` last byte | **0–8** (per-segment parameter, *not* `index*2`) |
 
 > The only dangerous field is the segment count: keep it `<= 5`. Every other
@@ -105,9 +105,9 @@ What happens, step by step:
 
 - **Never emit a value QuantumENGINE does not emit.** The table above is the
   observed set (older + newest firmware).
-- **Hard-clamp** segment count to `1..5`, the effect byte to
-  `0x28/0x32/0x3c/0x46/0x4b/0x50/0x64`, and the M byte to `0x00..0x06`
-  *before* building any report - never rely on the caller.
+- **Hard-clamp** segment count to `1..5`, the speed byte to
+  `0x28/0x32/0x3c/0x46/0x4b/0x50/0x64` (exclude `0x19` = 2x), and the mode
+  (M) byte to `0x00..0x06` *before* building any report - never rely on the caller.
 - A raw/"unsafe" escape hatch (e.g. `--raw`) must be clearly marked as capable
   of bricking the lighting and should not be exposed in normal UI paths.
 - Prefer **writing 5 segments** (the stock shape). A single correctly-paced
@@ -185,9 +185,11 @@ Raw frames (logo then ring, per write):
 
 Notes:
 
-- The **effect byte** (`0x4c[2]`) is not just a speed - it selects the mode
-  (so the earlier "tempo" name was a misnomer). `0x64` is the factory /
-  default effect; the others are distinct effects.
+- The **speed byte** (`0x4c[2]`) is the tempo; the newest capture
+  (`Switch RGB Speeds and Modes`) shows the speed slider maps `1x`=`0x4b`,
+  `1.5x`=`0x32`, `2x`=`0x19`, with `0x64` the factory default (slowest).
+  `0x19` (2x) is deliberately excluded from the safe set (fast/strobe). The
+  **MODE** is the `0x4d` M byte (see the new section below).
 - Recipe #2 (`effect 0x28, 2 segments`) is byte-identical to a table in the
   *older* capture - the protocol did not change structurally; the new
   firmware just exposes more effects.
@@ -197,3 +199,31 @@ Notes:
   new firmware does not require arming.
 - The exact UI mode-name -> table mapping is not yet confirmed; "Light Sync
   On" appears to send **no** HID report at all.
+
+## Speed & mode (newest capture: "Switch RGB Speeds and Modes")
+
+`pcaps/06 JBL Quantum 810 - Switch RGB Speeds and Modes.pcapng` (newest
+firmware) separates the two things the older "modes" capture conflated:
+
+- **`0x4c[2]` = SPEED** (tempo). QuantumENGINE's speed slider emits
+  `1x`=`0x4b`, `1.5x`=`0x32`, `2x`=`0x19` (the `0.5x` start value was not
+  re-sent). Smaller byte = faster; `0x19` is the fastest and reads as a
+  strobe, so it is **excluded** from the safe set (the clamps pin it to
+  `0x28`).
+- **`0x4d[5]` (M) = MODE**. `Wave`=`0x02`, `Breathing`=`0x00`,
+  `Glitch`=`0x03`, `Solid`=`0x01`.
+
+Seven writes were captured (1 segment each, color `ff0099`, `last`=`0x00`):
+
+| # | speed (`0x4c[2]`) | mode (`0x4d[5]`) |
+|---|-------------------|------------------|
+| 1 | `0x4b` | `0x02` (Wave) |
+| 2 | `0x32` | `0x02` (Wave) |
+| 3 | `0x19` | `0x02` (Wave) |
+| 4 | `0x19` | `0x00` (Breathing) |
+| 5 | `0x19` | `0x03` (Glitch) |
+| 6 | `0x19` | `0x01` (Solid) |
+| 7 | `0x19` | `0x02` (Wave) |
+
+This corrects the earlier note that the `0x4c` byte "selects the mode": it is
+the speed; the mode lives in the `0x4d` M byte.

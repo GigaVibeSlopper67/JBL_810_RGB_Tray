@@ -186,13 +186,11 @@ Verified behavior (live on a Quantum 810 via hidraw):
 
 Open questions (not yet decoded):
 
-- Exact meaning of the `M` byte (interval length in tempo units?). The
-  `0x4c` 4th byte behaves as the segment count: the played segments share
-  the tempo cycle (live: 5 = stock pulse). Whether it can also act as an
-  effect ID is still open - but values above 5 wedge the MCU, so any
-  experiment must stay within 1..5.
-- How "Solid"/"Wave"/"Glitch" effects are encoded (other header values,
-  other reports, or tempo `0x00`?).
+- **Resolved (newest capture)** - the `M` byte is the MODE selector
+  (`Wave`=`0x02`, `Breathing`=`0x00`, `Glitch`=`0x03`, `Solid`=`0x01`); the
+  `0x4c` tempo byte is the SPEED (`1x`=`0x4b`, `1.5x`=`0x32`, `2x`=`0x19` -
+  `0x19` is excluded as too fast/strobe). See
+  `docs/RGB_SAFE_RANGES.md`.
 - The minimal arming GET (the full round is used as the safe recipe).
 
 ### Controlling the lighting from Linux
@@ -204,7 +202,7 @@ every SET_REPORT is paced (~10 ms - back-to-back writes were dropped, the
 ring's writes went missing entirely); a clearing pass overwrites the whole
 table (identical segments per element - stale colors from earlier writes
 otherwise keep cycling); and every value is hard-clamped to the safe ranges
-derived from the QuantumENGINE captures (segments 1..5, effect 0x28/0x32/
+derived from the QuantumENGINE captures (segments 1..5, speed 0x28/0x32/
 0x3c/0x46/0x4b/0x50/0x64, M 0x00..0x06). The tray runs the whole sequence on
 a worker
 thread so the UI never blocks; it skips re-arming while fresh
@@ -223,10 +221,11 @@ thread so the UI never blocks; it skips re-arming while fresh
     clamped to 1..5; 0 disables - wipes stale colors of earlier writes)
   - `--segments N` - final table segments per element (default 5, clamped
     to 1..5 - QuantumENGINE never sends more than 5)
-  - `--speed N` - override the `0x4c` tempo byte (default `0x64`; clamped to
-    `0x28`/`0x32`/`0x64`)
-  - `--mode N` - override the `0x4d` M byte (default `0x02` logo / `0x05`
-    ring; clamped to `0x00`/`0x01`/`0x02`/`0x04`/`0x05`)
+  - `--speed N` - override the `0x4c` tempo/speed byte (default `0x64`; clamped
+    to `0x28`/`0x32`/`0x3c`/`0x46`/`0x4b`/`0x50`/`0x64`; `0x19` = 2x is excluded)
+  - `--mode N` - override the `0x4d` mode (M) byte (default `0x02` logo / `0x05`
+    ring; `Wave`=`0x02` `Breathing`=`0x00` `Glitch`=`0x03` `Solid`=`0x01`;
+    clamped to `0x00`..`0x06`)
   - `--delay SEC` - pause between SET reports (default 0.02; raise it if
     writes are still dropped)
   - `--lights on|off|keep` - lights state after the write (default `keep`)
