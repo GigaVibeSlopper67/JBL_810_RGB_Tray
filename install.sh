@@ -70,7 +70,11 @@ if command -v systemctl >/dev/null 2>&1; then
 
   echo "==> Reloading systemd (user) and enabling"
   systemctl --user daemon-reload
-  systemctl --user enable --now jbl-quantum910-tray.service
+  systemctl --user enable jbl-quantum910-tray.service
+  # Restart (not just 'enable --now') so re-running the installer always
+  # launches the freshly copied code; '--now' leaves an already-running
+  # instance on the old code (and its old tray icon).
+  systemctl --user restart jbl-quantum910-tray.service
 
   echo
   echo "OK. Installed and started (systemd --user)."

@@ -439,6 +439,38 @@ ICON_DIR = os.path.expanduser("~/.cache/jbl-quantum-tray/icons")
 # distinguishable from other battery icons in the panel.
 BADGE_LABEL = "JBL"
 
+# Bump whenever the badge drawing code changes. The version is part of the
+# generated PNG filename: panels (KDE/Plasma via KIconLoader) cache tray icons
+# by name, so reusing the same filename with new pixels keeps showing the old
+# icon. A new name forces the panel to load the updated image.
+BADGE_ICON_VERSION = 2
+BADGE_PNG_PREFIX = f"jbl-quantum-batt-v{BADGE_ICON_VERSION}-"
+
+
+def _badge_png_path(icon_dir: str, percent: int) -> str:
+    """Path of the cached badge PNG for a percentage (version-tagged)."""
+    return os.path.join(icon_dir, f"{BADGE_PNG_PREFIX}{percent}.png")
+
+
+def _prune_stale_badge_pngs(icon_dir: str) -> None:
+    """Delete badge PNGs from older naming schemes/versions.
+
+    The panel caches tray icons by filename, so files from a previous badge
+    version are never reused and would only clutter the cache directory.
+    """
+    try:
+        names = os.listdir(icon_dir)
+    except OSError:
+        return
+    for name in names:
+        if (name.startswith("jbl-quantum-batt") and name.endswith(".png")
+                and not name.startswith(BADGE_PNG_PREFIX)):
+            try:
+                os.remove(os.path.join(icon_dir, name))
+            except OSError:
+                pass
+
+
 _DIGIT_FONT = {
     "0": "111101101101111",
     "1": "010110010010111",
@@ -492,13 +524,13 @@ def _badge_pixels(
         fill_rgba = (231, 76, 60, 255)    # red
     stroke_rgba = (208, 213, 220, 240)    # light gray outline (Breeze-like)
     digit_rgba = (244, 247, 250, 255)     # near-white digits
+    digit_shadow_rgba = (20, 24, 28, 255)  # dark outline behind digits
 
     # Geometry in 64x64 final-pixel design coordinates.
     body = (3, 15, 54, 48)     # battery outline rounded rect
     rad = 5.0                  # corner radius
     stroke = 3                 # outline thickness
     nub = (54, 27, 60, 36)     # battery terminal on the right
-    bar = (7, 39, 50, 44)      # charge bar inside the body
 
     bx0, by0 = body[0] * supersample, body[1] * supersample
     bx1, by1 = body[2] * supersample, body[3] * supersample
@@ -507,11 +539,12 @@ def _badge_pixels(
     inner_r = max(1.0, rad - stroke) * supersample
     nx0, ny0 = nub[0] * supersample, nub[1] * supersample
     nx1, ny1 = nub[2] * supersample, nub[3] * supersample
-    fx0, fy0 = bar[0] * supersample, bar[1] * supersample
-    fx1, fy1 = bar[2] * supersample, bar[3] * supersample
 
-    bar_w = round((fx1 - fx0) * max(0, min(100, percent)) / 100)
-    bar_w = max(supersample, bar_w) if percent > 0 else 0
+    # The charge fill covers the full inner body, growing left-to-right.
+    fill_x0, fill_y0 = ix0, iy0
+    fill_x1, fill_y1 = ix1, iy1
+    fill_w = round((fill_x1 - fill_x0) * max(0, min(100, percent)) / 100)
+    fill_w = max(supersample, fill_w) if percent > 0 else 0
 
     # Digits (pixel font), scaled up, centered inside the battery body.
     text = str(percent)
@@ -522,9 +555,7 @@ def _badge_pixels(
     row_h = 5 * blk
     total_w = len(text) * cell + (len(text) - 1) * gap
     digit_x0 = (bx0 + bx1) // 2 - total_w // 2
-    band_top = by0 + stroke * supersample
-    band_bot = fy0
-    digit_y0 = (band_top + band_bot) // 2 - row_h // 2
+    digit_y0 = (by0 + by1) // 2 - row_h // 2
 
     for y in range(big):
         fy = y + 0.5
@@ -537,7 +568,7 @@ def _badge_pixels(
             elif in_rrect(fx, fy, bx0, by0, bx1, by1, rad * supersample):
                 if not in_rrect(fx, fy, ix0, iy0, ix1, iy1, inner_r):
                     rgba = stroke_rgba
-                elif bar_w and fx0 <= fx < fx0 + bar_w and fy0 <= fy <= fy1:
+                elif fill_w and fill_x0 <= fx < fill_x0 + fill_w and fill_y0 <= fy <= fill_y1:
                     rgba = fill_rgba
             if rgba is not None:
                 i = (row + x) * 4
@@ -548,18 +579,27 @@ def _badge_pixels(
             i = (y * big + x) * 4
             buf[i : i + 4] = bytes(rgba)
 
-    for idx, char in enumerate(text if draw_digits else ""):
-        rows = _DIGIT_FONT.get(char)
-        if not rows:
-            continue
-        x_off = digit_x0 + idx * (cell + gap)
-        for r in range(5):
-            for c in range(3):
-                if rows[r * 3 + c] == "1":
-                    for yy in range(blk):
-                        py = digit_y0 + r * blk + yy
-                        for xx in range(blk):
-                            put(x_off + c * blk + xx, py, digit_rgba)
+    if draw_digits:
+        def draw_text(x0: int, y0: int, rgba) -> None:
+            for idx, char in enumerate(text):
+                rows = _DIGIT_FONT.get(char)
+                if not rows:
+                    continue
+                x_off = x0 + idx * (cell + gap)
+                for r in range(5):
+                    for c in range(3):
+                        if rows[r * 3 + c] == "1":
+                            for yy in range(blk):
+                                py = y0 + r * blk + yy
+                                for xx in range(blk):
+                                    put(x_off + c * blk + xx, py, rgba)
+
+        # Dark outline so the digits stay readable across the fill/empty edge.
+        for ox in (-1, 0, 1):
+            for oy in (-1, 0, 1):
+                if ox or oy:
+                    draw_text(digit_x0 + ox * supersample, digit_y0 + oy * supersample, digit_shadow_rgba)
+        draw_text(digit_x0, digit_y0, digit_rgba)
 
     # Bottom label (e.g. "JBL"), smaller than the digits, centered in the
     # free space below the battery body (used only in the no-Pillow fallback).
@@ -644,13 +684,16 @@ def _draw_badge_digits(img, percent: int) -> None:
         if draw.textlength(text, font=font) <= 40:
             break
         sz -= 2
-    # Centered inside the battery body, above the charge bar.
+    # Centered inside the battery body, over the charge fill. A dark outline
+    # keeps the digits readable across the fill/empty boundary.
     try:
-        draw.text((29, 28), text, font=font, fill=(244, 247, 250, 255), anchor="mm")
+        draw.text((29, 32), text, font=font, fill=(244, 247, 250, 255),
+                  stroke_width=2, stroke_fill=(20, 24, 28, 255), anchor="mm")
     except TypeError:  # Pillow < 8 without anchor support
         bbox = draw.textbbox((0, 0), text, font=font)
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        draw.text((29 - w // 2, 28 - h // 2), text, font=font, fill=(244, 247, 250, 255))
+        draw.text((29 - w // 2, 32 - h // 2), text, font=font, fill=(244, 247, 250, 255),
+                  stroke_width=2, stroke_fill=(20, 24, 28, 255))
 
 
 def _draw_badge_label(img, label: str) -> None:
@@ -1487,6 +1530,7 @@ class BatteryTrayApp:
         # (some desktops hide the AppIndicator label).
         self._icon_dir = ICON_DIR
         os.makedirs(self._icon_dir, exist_ok=True)
+        _prune_stale_badge_pngs(self._icon_dir)
         self._badge_label: str = BADGE_LABEL
         self._last_badge_percent: Optional[int] = None
         self._last_icon: Optional[str] = None
@@ -2119,7 +2163,7 @@ class BatteryTrayApp:
         if self._last_badge_percent == percent:
             return
         os.makedirs(self._icon_dir, exist_ok=True)
-        png_path = os.path.join(self._icon_dir, f"jbl-quantum-batt-{percent}.png")
+        png_path = _badge_png_path(self._icon_dir, percent)
         if not _write_badge_png(percent, png_path, self._badge_label):
             self._numeric_icons_ok = False
             return
