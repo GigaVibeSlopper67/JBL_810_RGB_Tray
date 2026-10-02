@@ -843,7 +843,7 @@ class BatteryHistory:
         if rate >= self.MIN_RATE:
             # Charging is not exposed over HID (verified); a rising battery
             # is the closest observable signal, so mark it as inferred.
-            return None, "Battery level is rising (charging?)"
+            return "Charging", "Battery level is rising (charging?)"
         return None, f"Drain rate: {rate:+.1f}%/h"
 
 
