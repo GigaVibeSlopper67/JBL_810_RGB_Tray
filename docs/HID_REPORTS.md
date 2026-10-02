@@ -59,12 +59,14 @@ is in use).
 | `0x51` | EQ-like data | 12 small values `01 03 02 00 03 02 01 00 02 01 03 02` (undecoded) |
 | `0x5b` | Config data | structure like 0x51 (undecoded) |
 | `0x71` | `[0x71, 01, 02, 00...]` | undecoded |
-| `0x75` | `[0x75, 18, 02, 00...]` | undecoded |
+| `0x75` | **Auto power off timeout** | `[0x75, value]` = 5-min units: `0`=off, `6`=30 min, `12`=1 h, `24`=2 h (the `18`/`0x18` in an earlier capture = the 2 h default); byte2 `0x02` is an undecoded flag |
 | `0x07` (feature) | dynamic byte | byte1 fluctuates at runtime (0x0e, 0x07, 0x00 observed; undecoded) |
 | `0x47`, `0x4a` (lower bytes), `0x50` | static info | `00 00 05 5c 03 00 80 2c` (undecoded) |
 
 **Pattern:** for every SET command the read-back report is `SET id - 1`
-(`0x46`→`0x45` ANC, `0x4b`→`0x4a` lights, `0x5d`→`0x5c` sidetone).
+(`0x46`→`0x45` ANC, `0x4b`→`0x4a` lights, `0x5d`→`0x5c` sidetone). The one
+exception is **auto power off** (`0x75`): its GET and SET share the same
+report id (`0x75`).
 
 Note: on this device a GET_REPORT for an unknown report ID does not stall -
 the firmware answers with the nearest known lower report. The kernel may
@@ -80,11 +82,13 @@ Payload is 2 bytes: `[report_id, value]`.
 | `0x46` | ANC mode | `0`=off, `1`=on, `2`=talk-through |
 | `0x4b` | Lights | `0`=off, `1`=on |
 | `0x5d` | Sidetone | `0`=off, `1`=low, `2`=mid, `3`=high |
+| `0x75` | Auto power off | `0`=off, `6`=30 min, `12`=1 h, `24`=2 h (value = 5-min units) |
 
 The Windows "QuantumENGINE" software sends exactly these as class
 SET_REPORT(Feature) requests; on Linux the hidraw `HIDIOCSFEATURE` ioctl is
 equivalent. Each accepted command is acknowledged by the matching event
-report (`0x02` for ANC, `0x07` for lights).
+report (`0x02` for ANC, `0x07` for lights). Auto power off (`0x75`) has **no
+event ACK** - its state is confirmed only via the `0x75` GET read-back.
 
 ### Lighting colors/effects (RGB) - reports 0x4c/0x4d
 

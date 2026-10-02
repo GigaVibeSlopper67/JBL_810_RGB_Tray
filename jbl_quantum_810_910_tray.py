@@ -49,6 +49,15 @@ KNOWN_PRODUCT_IDS_HEX = tuple(f"{pid:04x}" for pid in KNOWN_PRODUCT_IDS)
 PRODUCT_ID = 0x2088  # Quantum 910 (kept for backwards compatibility)
 # HID feature report holding the direct battery percentage (Quantum 810).
 BATTERY_FEATURE_REPORT_ID = 0x49
+# Auto power off / power saving (Quantum 810): SET and GET use the same
+# feature report id 0x75 (unlike ANC/lights/sidetone where GET = SET - 1).
+# Payload [0x75, value]; value = timeout in 5-minute units. Decoded from
+# pcaps/07 "Switch Auto power Off modes": SET 0x75 0c/0x06/0x00 for
+# 1 h / 30 min / off. 0x18 (24 = 2 h) is inferred (the initial 2 h value
+# was never re-sent) and corroborated by the 0x75 GET read-back showing
+# 0x18 as the 2 h default.
+FEAT_AUTO_POWER_OFF = 0x75
+AUTO_POWER_OFF_OPTIONS = (("Off", 0x00), ("30 min", 0x06), ("1 h", 0x0C), ("2 h", 0x18))
 # Directory for the generated numeric badge icons (percentage drawn into the tray icon).
 ICON_DIR = os.path.expanduser("~/.cache/jbl-quantum-tray/icons")
 # Battery history log (CSV, appended on every percentage change). Used for
@@ -864,6 +873,7 @@ class StatusSample:
     mix: Optional[int] = None  # 0..16, 0=full chat, 0x10=full game
     lights: Optional[bool] = None
     sidetone: Optional[int] = None  # 0=off, 1=low, 2=mid, 3=high
+    auto_power_off: Optional[int] = None  # 5-min units: 0=off, 6=30 min, 12=1 h, 24=2 h
     power_marker: bool = False  # 0x03/0x09 power-on markers
     source: str = ""
     raw_hex: str = ""
@@ -871,6 +881,7 @@ class StatusSample:
 
     ANC_NAMES = {0: "off", 1: "on", 2: "talk-through"}
     SIDETONE_NAMES = {0: "off", 1: "low", 2: "mid", 3: "high"}
+    AUTO_POWER_OFF_NAMES = {0: "off", 6: "30 min", 12: "1 h", 24: "2 h"}
 
     def anc_label(self) -> Optional[str]:
         if self.anc is None:
@@ -1072,7 +1083,8 @@ class HidrawBatteryReader:
 
         Known commands (Quantum 810, confirmed in HeadsetControl #357
         captures): 0x46 ANC (0=off/1=on/2=talk-through), 0x4b lights,
-        0x5d sidetone (0=off/1=low/2=mid/3=high).
+        0x5d sidetone (0=off/1=low/2=mid/3=high), 0x75 auto power off
+        (0=off/6=30 min/12=1 h/24=2 h; pcaps/07).
         """
         if self._fd is None:
             try:
@@ -1179,6 +1191,7 @@ class HidrawBatteryReader:
           0x62 -> mix      [0x62, 0..16]                     (mirrors event 0x10)
           0x67 -> mic      [0x67, 1=on, 0=muted]             (mirrors event 0x06)
           0x5c -> sidetone [0x5c, 0=off/1=low/2=mid/3=high]  (mirrors SET 0x5d)
+          0x75 -> auto-power-off [0x75, 0=off/6=30min/12=1h/24=2h] (same id GET/SET)
         Returns a StatusSample; individual fields stay None when a read
         fails or the echoed report id does not match.
         """
@@ -1192,7 +1205,7 @@ class HidrawBatteryReader:
 
         sample = StatusSample(
             source=f"hidraw-feat:{self.path}",
-            raw_hex="features 0x45/0x67/0x4a/0x62/0x5c",
+            raw_hex="features 0x45/0x67/0x4a/0x62/0x5c/0x75",
             ts=time.time(),
         )
         feat = self.read_feature(0x45, 2)
@@ -1211,6 +1224,9 @@ class HidrawBatteryReader:
         feat = self.read_feature(0x5C, 2)
         if feat and feat[0] == 0x5C and feat[1] in (0, 1, 2, 3):
             sample.sidetone = int(feat[1])
+        feat = self.read_feature(0x75, 2)
+        if feat and feat[0] == 0x75 and feat[1] in (0x00, 0x06, 0x0C, 0x18):
+            sample.auto_power_off = int(feat[1])
         return sample
 
 
@@ -1429,6 +1445,8 @@ class BatteryTrayApp:
         self._last_logged_mix: Optional[int] = None
         self._sidetone: Optional[int] = None  # 0=off, 1=low, 2=mid, 3=high
         self._last_logged_sidetone: Optional[int] = None
+        self._auto_power_off: Optional[int] = None  # 5-min units: 0=off, 6=30 min, 12=1 h, 24=2 h
+        self._last_logged_auto_power_off: Optional[int] = None
 
         # Lighting write tuning (see --lighting-delay / --lighting-reset-
         # segments) + worker state (rapid clicks are coalesced, a lights
@@ -1575,6 +1593,10 @@ class BatteryTrayApp:
         self._menu_sidetone_item.set_sensitive(False)
         menu.append(self._menu_sidetone_item)
 
+        self._menu_auto_power_off_item = self.Gtk.MenuItem(label="Auto power off: --")
+        self._menu_auto_power_off_item.set_sensitive(False)
+        menu.append(self._menu_auto_power_off_item)
+
         self._menu_serial_item = self.Gtk.MenuItem(label="Serial: --")
         self._menu_serial_item.set_sensitive(False)
         menu.append(self._menu_serial_item)
@@ -1613,6 +1635,25 @@ class BatteryTrayApp:
             sidetone_item.set_submenu(sidetone_menu)
             self._sidetone_menu_item = sidetone_item
             menu.append(sidetone_item)
+
+            # Auto power off / power saving: radio items (Off/30 min/1 h/2 h)
+            # written as feature 0x75 (value = timeout in 5-minute units).
+            auto_menu = self.Gtk.Menu()
+            self._auto_power_off_radio_items = {}
+            auto_group_leader = None
+            for label, value in AUTO_POWER_OFF_OPTIONS:
+                sub = self.Gtk.RadioMenuItem(label=f"Auto power off: {label}")
+                if auto_group_leader is not None:
+                    sub.join_group(auto_group_leader)
+                else:
+                    auto_group_leader = sub
+                sub.connect("activate", lambda _w, v=value: self._on_auto_power_off_radio(v))
+                auto_menu.append(sub)
+                self._auto_power_off_radio_items[value] = sub
+            auto_item = self.Gtk.MenuItem(label="Auto power off")
+            auto_item.set_submenu(auto_menu)
+            self._auto_power_off_menu_item = auto_item
+            menu.append(auto_item)
 
             # RGB lighting (logo + ring elements, Quantum 810): solid color,
             # per-element color, or a per-segment custom editor. Applies as a
@@ -1771,6 +1812,36 @@ class BatteryTrayApp:
                     pass
         finally:
             self._sidetone_radios_syncing = False
+
+    def _set_auto_power_off(self, value: int) -> None:
+        if self.hidraw_reader is None:
+            return
+        if self.hidraw_reader.send_feature(FEAT_AUTO_POWER_OFF, value):
+            name = StatusSample.AUTO_POWER_OFF_NAMES.get(value, str(value))
+            _log(f"Auto power off set to {name} (feature 0x75)")
+            self._auto_power_off = value
+            self._update_auto_power_off_radios()
+
+    def _on_auto_power_off_radio(self, value: int) -> None:
+        """Menu handler; ignores the programmatic radio sync."""
+        if getattr(self, "_auto_power_off_radios_syncing", False):
+            return
+        self._set_auto_power_off(value)
+
+    def _update_auto_power_off_radios(self) -> None:
+        """Reflect the current auto-power-off timeout in the radio menu items."""
+        items = getattr(self, "_auto_power_off_radio_items", None)
+        if not items:
+            return
+        self._auto_power_off_radios_syncing = True
+        try:
+            for value, item in items.items():
+                try:
+                    item.set_active(value == self._auto_power_off)
+                except Exception:
+                    pass
+        finally:
+            self._auto_power_off_radios_syncing = False
 
     def _on_lighting_speed_radio(self, value: int) -> None:
         """Menu handler; ignores the programmatic radio sync."""
@@ -2197,6 +2268,12 @@ class BatteryTrayApp:
                 _log(f"Sidetone: {StatusSample.SIDETONE_NAMES.get(self._sidetone, self._sidetone)} (source={status_sample.source})")
                 self._last_logged_sidetone = self._sidetone
             needs_render = True
+        if status_sample.auto_power_off is not None and status_sample.auto_power_off != self._auto_power_off:
+            self._auto_power_off = status_sample.auto_power_off
+            if self._last_logged_auto_power_off != self._auto_power_off:
+                _log(f"Auto power off: {StatusSample.AUTO_POWER_OFF_NAMES.get(self._auto_power_off, self._auto_power_off)} (source={status_sample.source})")
+                self._last_logged_auto_power_off = self._auto_power_off
+            needs_render = True
         if status_sample.mic_muted is not None:
             # Make the mic state visible in the menu as soon as we know it.
             if self.last_mute_sample is None:
@@ -2433,6 +2510,9 @@ class BatteryTrayApp:
             if getattr(self, "_menu_sidetone_item", None) is not None:
                 side_txt = StatusSample.SIDETONE_NAMES.get(self._sidetone) if self._sidetone is not None else None
                 self._menu_sidetone_item.set_label(f"Sidetone: {side_txt or '--'}")
+            if getattr(self, "_menu_auto_power_off_item", None) is not None:
+                apo_txt = StatusSample.AUTO_POWER_OFF_NAMES.get(self._auto_power_off) if self._auto_power_off is not None else None
+                self._menu_auto_power_off_item.set_label(f"Auto power off: {apo_txt or '--'}")
             if getattr(self, "_sidetone_menu_item", None) is not None:
                 # Grey out the sidetone control while muted (mirrors the
                 # QuantumENGINE behaviour of disabling sidetone on mute).
@@ -2440,6 +2520,7 @@ class BatteryTrayApp:
             if getattr(self, "_menu_lights_toggle_item", None) is not None and self._lights_on is not None:
                 self._menu_lights_toggle_item.set_label("Lights: turn off" if self._lights_on else "Lights: turn on")
             self._update_sidetone_radios()
+            self._update_auto_power_off_radios()
         except Exception:
             pass
 
@@ -2452,6 +2533,7 @@ class BatteryTrayApp:
             serial_status = self._serial or "--"
             lights_status = "--" if self._lights_on is None else ("on" if self._lights_on else "off")
             sidetone_status = StatusSample.SIDETONE_NAMES.get(self._sidetone) if self._sidetone is not None else "--"
+            apo_status = StatusSample.AUTO_POWER_OFF_NAMES.get(self._auto_power_off) if self._auto_power_off is not None else "--"
             est_line = f"{est_tip}\n" if est_tip else ""
             tip = (f"{self._model_name}: {self.last_sample.percent}%\n"
                    f"Microphone: {mute_status}\n"
@@ -2459,6 +2541,7 @@ class BatteryTrayApp:
                    f"Game/Chat mix: {mix_status}\n"
                    f"Lights: {lights_status}\n"
                    f"Sidetone: {sidetone_status}\n"
+                   f"Auto power off: {apo_status}\n"
                    f"{est_line}"
                    f"Serial: {serial_status}\n"
                    f"Source: {self.last_sample.source}\n"
@@ -2524,7 +2607,8 @@ def main() -> int:
         "--enable-controls",
         action="store_true",
         help="Add headset controls to the menu (ANC cycle, lights toggle, "
-        "sidetone). These CHANGE device state via HID feature reports.",
+        "sidetone, auto power off). These CHANGE device state via HID feature "
+        "reports.",
     )
     parser.add_argument(
         "--lighting-delay",

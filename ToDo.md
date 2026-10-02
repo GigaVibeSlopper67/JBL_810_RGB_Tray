@@ -168,3 +168,17 @@ now writes the table while the lights are on (buffered) and does the off->on
 flick back-to-back at the very end; `_commit_lights_on` verifies via the `0x4a`
 read-back and retries (up to 3x, with a settle delay). "Solid" also greys out
 the Speed submenu (a static color has no speed).
+
+---
+
+Round 11 (2026-10-02, `pcaps/07 ... Switch Auto power Off modes.pcapng`): the
+auto power-off / power-saving timeout **is a dongle setting** (not software-only
+like DRC). It is a HID SET_REPORT(Feature) on interface 5, report id `0x75`,
+value = timeout in **5-minute units**: `0x00`=off, `0x06`=30 min, `0x0c`=1 h,
+`0x18`=2 h (`0x18` was inferred from the 2 h default read-back; `0c`/`06`/`00`
+were captured directly). Unlike ANC/lights/sidetone, the GET and SET share the
+same id `0x75` and there is no event ACK - state is confirmed via the `0x75`
+read-back. Implemented in the tray (`Auto power off` radio submenu behind
+`--enable-controls`) and `tools/jbl_status.py` (`--set-auto-power-off`); all
+four values verified working live. Docs updated (`HID_REPORTS.md`,
+`Quantum_Engine_Features.md`, `SCRIPT_UPDATES.md`).

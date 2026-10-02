@@ -2,6 +2,23 @@
 
 ## Latest updates (2026-10-02)
 
+### Auto power off control + `0x75` decode
+
+- **Decoded the `0x75` feature report** from `pcaps/07 - JBL Quantum 810
+  Switch Auto power Off modes.pcapng`: the auto power-off / power-saving
+  timeout **is a dongle setting** (not software-only like DRC). It is a HID
+  SET_REPORT(Feature) on interface 5 with a 5-minute-unit value: `0`=off,
+  `6`=30 min, `12`=1 h, `24`=2 h (`24`=`0x18` inferred, matching the `0x75`
+  GET read-back default). GET and SET share the same id `0x75`.
+- **Tray control** (`--enable-controls`): a new **Auto power off** radio
+  submenu (Off / 30 min / 1 h / 2 h) writes `0x75` via the existing
+  `send_feature` path; the state is read back via `0x75` on every refresh
+  and shown in the menu + tooltip (no event ACK exists for this setting).
+- **CLI parity** (`tools/jbl_status.py`): `--set-auto-power-off
+  {off,30min,1h,2h}` plus an `auto power off` line in the status/JSON output.
+- **Docs**: `docs/HID_REPORTS.md` and `docs/Quantum_Engine_Features.md`
+  updated (the previously-"undecoded" `0x75` is now documented).
+
 ### Tray Speed + Mode selectors, and a "lights turn off" bug fix
 
 - **Speed / Mode submenus** (tray, `--enable-controls`): the `Lighting` menu

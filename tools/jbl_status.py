@@ -31,11 +31,13 @@ Feature reports (SET_REPORT, 810 confirmed - these CHANGE device state):
     0x46  ANC              byte1: 0=off, 1=on, 2=talk-through
     0x4b  Lights           byte1: 0=off, 1=on
     0x5d  Sidetone         byte1: 0=off, 1=low, 2=mid, 3=high
+    0x75  Auto power off   byte1: 0=off, 6=30 min, 12=1 h, 24=2 h (5-min units)
 
 CLI:
     python3 tools/jbl_status.py --json          # one-shot JSON dump
     python3 tools/jbl_status.py --watch 0.5     # continuous status output
     python3 tools/jbl_status.py --set-anc on    # control (needs write access)
+    python3 tools/jbl_status.py --set-auto-power-off 1h  # power-saving timeout
 """
 
 from __future__ import annotations
@@ -75,6 +77,7 @@ FEAT_BATTERY = 0x49   # GET: [0x49, percent]; 810 only
 FEAT_SET_ANC = 0x46   # SET: [0x46, 0=off/1=on/2=tt]
 FEAT_SET_LIGHTS = 0x4B  # SET: [0x4b, 0/1]
 FEAT_SET_SIDETONE = 0x5D  # SET: [0x5d, 0=off/1=low/2=mid/3=high]
+FEAT_AUTO_POWER_OFF = 0x75  # SET/GET: [0x75, 0=off/6=30min/12=1h/24=2h] (same id; 5-min units)
 FEAT_SERIAL = 0x61    # GET: ASCII part/serial string
 FEAT_EQ = 0x51        # GET: EQ-like data (undecoded)
 
@@ -88,6 +91,7 @@ FEAT_GET_MIC = 0x67       # GET: [0x67, 1=on, 0=muted]    (mirrors event 0x06)
 
 ANC_NAMES = {0: "off", 1: "on", 2: "talk-through"}
 SIDETONE_NAMES = {0: "off", 1: "low", 2: "mid", 3: "high"}
+AUTO_POWER_OFF_NAMES = {0: "off", 6: "30 min", 12: "1 h", 24: "2 h"}
 
 _MIX_STEPS = 16  # 0x00 (chat) .. 0x10 (game)
 
@@ -109,6 +113,7 @@ class HeadsetStatus:
     lights_on: Optional[bool] = None
     mix: Optional[int] = None                 # 0..16, 0=full chat, 16=full game
     sidetone: Optional[int] = None            # 0=off, 1=low, 2=mid, 3=high
+    auto_power_off: Optional[int] = None      # 5-min units: 0=off, 6=30 min, 12=1 h, 24=2 h
     serial: Optional[str] = None
     # Bookkeeping:
     seen_rids: set = field(default_factory=set)
@@ -142,6 +147,7 @@ class HeadsetStatus:
             "game_chat_mix": self.mix,
             "mix_label": self.mix_label(),
             "sidetone": SIDETONE_NAMES.get(self.sidetone) if self.sidetone is not None else None,
+            "auto_power_off": AUTO_POWER_OFF_NAMES.get(self.auto_power_off) if self.auto_power_off is not None else None,
             "serial": self.serial,
             "seen_rids": sorted(f"0x{r:02x}" for r in self.seen_rids),
             "eq_data": self.eq_data,
@@ -362,6 +368,10 @@ class JblStatusReader:
             if feat and feat[0] == FEAT_GET_SIDETONE and feat[1] in (0, 1, 2, 3):
                 self.status.sidetone = int(feat[1])
                 ok_any = True
+            feat = self._get_feature(FEAT_AUTO_POWER_OFF, 2)
+            if feat and feat[0] == FEAT_AUTO_POWER_OFF and feat[1] in (0x00, 0x06, 0x0C, 0x18):
+                self.status.auto_power_off = int(feat[1])
+                ok_any = True
             self._state_read_ok = True if ok_any else False
         # Serial string (read once; cache).
         if self.status.serial is None:
@@ -402,6 +412,16 @@ class JblStatusReader:
             return False
         return self._set_feature(FEAT_SET_SIDETONE, value)
 
+    def set_auto_power_off(self, level: str) -> bool:
+        """level: 'off' | '30min' | '1h' | '2h' (5-minute units -> feature 0x75)."""
+        value = {"off": 0x00, "30min": 0x06, "1h": 0x0C, "2h": 0x18}.get(level)
+        if value is None:
+            raise ValueError(f"invalid auto power off value: {level!r}")
+        ok = self._set_feature(FEAT_AUTO_POWER_OFF, value)
+        if ok:
+            self.status.auto_power_off = value
+        return ok
+
     # -- extras -------------------------------------------------------------------
 
     def read_eq_data(self) -> Optional[list]:
@@ -424,6 +444,8 @@ def main() -> int:
                     help="set lights on/off - CHANGES DEVICE STATE")
     ap.add_argument("--set-sidetone", choices=["off", "low", "mid", "high"],
                     help="set sidetone level - CHANGES DEVICE STATE")
+    ap.add_argument("--set-auto-power-off", choices=["off", "30min", "1h", "2h"],
+                    help="set auto power off timeout - CHANGES DEVICE STATE")
     ap.add_argument("--eq", action="store_true", help="also read feature 0x51 (EQ-like data)")
     args = ap.parse_args()
 
@@ -434,7 +456,7 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    control_requested = args.set_anc or args.set_lights or args.set_sidetone
+    control_requested = args.set_anc or args.set_lights or args.set_sidetone or args.set_auto_power_off
     st = reader.poll()
 
     if args.set_anc:
@@ -446,6 +468,9 @@ def main() -> int:
     if args.set_sidetone:
         ok = reader.set_sidetone(args.set_sidetone)
         print(f"set sidetone {args.set_sidetone}: {'ok' if ok else 'FAILED'}")
+    if args.set_auto_power_off:
+        ok = reader.set_auto_power_off(args.set_auto_power_off)
+        print(f"set auto power off {args.set_auto_power_off}: {'ok' if ok else 'FAILED'}")
 
     if args.eq:
         reader.read_eq_data()
@@ -491,6 +516,8 @@ def _print_status(st: HeadsetStatus, label: str = "") -> None:
     print(f"  game/chat mix: {mix}", flush=True)
     side = "--" if st.sidetone is None else SIDETONE_NAMES.get(st.sidetone, str(st.sidetone))
     print(f"  sidetone: {side}", flush=True)
+    apo = "--" if st.auto_power_off is None else AUTO_POWER_OFF_NAMES.get(st.auto_power_off, str(st.auto_power_off))
+    print(f"  auto power off: {apo}", flush=True)
     print(f"  serial: {st.serial or '-'}", flush=True)
     if st.eq_data:
         print(f"  eq_data(0x51): {st.eq_data}", flush=True)

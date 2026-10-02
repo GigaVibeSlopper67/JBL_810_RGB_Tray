@@ -66,6 +66,27 @@ Turning side tone off restores the previous ANC state.
 - When the boom arm is up -> Side Tone is greyed out in this mode and not
   toggleable
 
+### Power Saving / Auto Power Off
+
+The auto power-off / power-saving timeout **is a dongle setting** (unlike
+DRC and the sound profile below). QuantumENGINE sends it as a HID
+SET_REPORT(Feature) on interface 5, report id `0x75`, with the timeout in
+**5-minute units**:
+
+| Setting | `0x75` value |
+|---------|--------------|
+| OFF     | `0x00` |
+| 30 min  | `0x06` |
+| 1 h     | `0x0c` |
+| 2 h     | `0x18` |
+
+Decoded from `pcaps/07 - JBL Quantum 810 Switch Auto power Off modes.pcapng`
+(SET `0x75 0c/0x06/0x00` for 1 h / 30 min / off). `0x18` (2 h) is inferred -
+2 h was the initial value and never re-sent - but it matches the `0x75` GET
+read-back (`[0x75, 0x18, 0x02, …]`). The GET and SET share the same id `0x75`
+(no `0x74` mirror), and there is no event ACK - the value is confirmed via the
+`0x75` read-back only.
+
 ## Software-Only Features (Confirmed)
 
 ### DRC

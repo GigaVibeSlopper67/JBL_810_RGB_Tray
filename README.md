@@ -17,6 +17,7 @@ Experimental controls (opt-in, **they change device state**):
 - **Cycle ANC** (off -> on -> talk-through)
 - **Lights on/off** toggle
 - **Sidetone level** (off/low/mid/high)
+- **Auto power off** (off/30 min/1 h/2 h)
 
 The confirmed battery pattern for this headset is:
 
@@ -30,8 +31,8 @@ The confirmed battery pattern for this headset is:
 - **Tray/AppIndicator**: shows the battery % in the tray and updates automatically.
 - **Reading**: hidraw first (works for both models), pyusb as fallback. On the Quantum 810 the battery is actively polled via HID feature report `0x49`, so it stays fresh even when the headset is quiet.
 - **Extra headset status (810)**: the tray and CLI also show **ANC state**, **mic mute**, the **game/chat dial position** and the device **part/serial number** - see `docs/HID_REPORTS.md`.
-- **Controls (opt-in)**: with `jbl_quantum910_tray.py --enable-controls` the tray menu can **cycle ANC**, **toggle the lights**, **set the sidetone** (radio items marking the level read back via `0x5c`) and **set the lighting color** (logo + ring elements, breathing effect; "Lighting" submenu with a GTK color picker + presets) via HID feature reports (`0x46`/`0x4b`/`0x5d`/`0x4c`+`0x4d`) - see `docs/HID_REPORTS.md`.
-- **Lights/sidetone state**: the tray reads back and shows the current **lights state** (`0x4a`) and **sidetone level** (`0x5c`) in the menu/tooltip; the sidetone submenu marks the active level.
+- **Controls (opt-in)**: with `jbl_quantum910_tray.py --enable-controls` the tray menu can **cycle ANC**, **toggle the lights**, **set the sidetone** (radio items marking the level read back via `0x5c`), **set the auto power off** (radio items marking the timeout read back via `0x75`) and **set the lighting color** (logo + ring elements, breathing effect; "Lighting" submenu with a GTK color picker + presets) via HID feature reports (`0x46`/`0x4b`/`0x5d`/`0x75`/`0x4c`+`0x4d`) - see `docs/HID_REPORTS.md`.
+- **Lights/sidetone/auto-power-off state**: the tray reads back and shows the current **lights state** (`0x4a`), **sidetone level** (`0x5c`) and **auto power off timeout** (`0x75`) in the menu/tooltip; the sidetone and auto-power-off submenus mark the active value.
 - **Notifications**: desktop notifications on **low battery** (20/10/5%) and **dongle connect/disconnect**; mute notifications opt-in via `--notify-mute`; everything off with `--no-notifications`.
 - **Battery history & estimate**: every percentage change is appended to `~/.local/share/jbl-quantum-tray/history.csv`; the tray computes the drain rate and shows an **estimated runtime left** in the menu/tooltip (needs ~5 minutes of data).
 - **Permission helper**: `check_permissions.sh` verifies your hidraw access; `setup_udev_rules.sh` installs the udev rules (`uaccess` + `0666` — no plugdev group or usermod needed).
@@ -268,7 +269,7 @@ The scripts below live in `tools/` and are useful for analysis/debugging:
 - **HID**: interface 3 (Quantum 910) / interface 5 (Quantum 810), IN endpoint (used by the `pyusb` method)
 - **Updates**: on the Quantum 910 the headset can go "quiet" — use the volume/buttons to generate traffic. On the Quantum 810 the tray polls the battery directly, so it always stays fresh.
 - **Mute**: works on both models — Quantum 910 via `0x2f` events, Quantum 810 via `0x06` mic on/off events.
-- **Controls**: ANC/lights/sidetone commands change device state; in the tray they are only active with `--enable-controls`, in the CLI only via the explicit `--set-*` flags.
+- **Controls**: ANC/lights/sidetone/auto-power-off commands change device state; in the tray they are only active with `--enable-controls`, in the CLI only via the explicit `--set-*` flags.
 - **Notifications**: need libnotify (`gir1.2-notify-0.7` on Debian/Ubuntu, `libnotify` on Fedora) or the `notify-send` CLI; without either, the tray silently skips notifications.
 - **History**: the battery log lives in `~/.local/share/jbl-quantum-tray/history.csv` (one row per percentage change); delete it to reset the drain-rate estimate.
 - **hidraw safety**: never run a pyusb session against the vendor interface while the hidraw node exists — claiming the interface removes the hidraw node until the dongle is replugged (the tray now avoids this, but the older CLI tools can still trigger it).
