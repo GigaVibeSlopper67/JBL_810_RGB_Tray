@@ -117,6 +117,10 @@ sudo dnf install -y python3-gobject gtk3 libayatana-appindicator-gtk3
 # RHEL / CentOS Stream / Rocky / AlmaLinux (the last via EPEL):
 sudo dnf install -y epel-release
 sudo dnf install -y python3-gobject gtk3 libayatana-appindicator-gtk3
+
+# Arch
+sudo pacman -Syu python-gobject gtk3 libayatana-appindicator
+
 ```
 
 ## Tray (AppIndicator) - How to use
