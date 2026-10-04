@@ -36,6 +36,7 @@ The confirmed battery pattern for this headset is:
 - **Permission helper**: `check_permissions.sh` verifies your hidraw access; `setup_udev_rules.sh` installs the udev rules (`uaccess` + `0666` — no plugdev group or usermod needed).
 - **Login service**: installs as `systemd --user` (no need for root to run the app).
 - **Tools and docs**: analysis scripts and documentation were organized into folders.
+- **Tested desktop compatibility**: It has been tested on latest KDE Plasma 67 and Gnome.
 
 ## Project structure
 
